@@ -37,47 +37,47 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 @SuppressLint("StaticFieldLeak")
 internal object AntiDetectionConfig {
-    // ====== 检测开关 ======
-    var enabled = true                          // 总开关
-    var hideXposed = true                       // Xposed检测隐藏
-    var hideRoot = true                         // Root检测隐藏  
-    var hideDebug = true                        // Debug检测隐藏
-    var hideFiles = true                        // 文件/目录检测隐藏
-    var hideProps = true                        // SystemProperties检测隐藏
-    var hideSELinux = true                      // SELinux状态隐藏
-    var hideProc = true                         // /proc/ 检测隐藏
-    var hideNative = true                       // Native层检测隐藏
-    var hideSignature = true                    // 签名检测隐藏
-    var hideApk = true                          // APK存在性检测隐藏
-    var hideClassLoader = true                  // ClassLoader检测隐藏
-    var hideMemory = true                       // 内存检测隐藏
-    var hideTrace = true                        // 栈跟踪检测隐藏
-    var hideNetwork = true                      // 网络检测隐藏
-    var hideBattery = true                      // 电池状态检测隐藏
-    var hide模拟器 = true                        // 模拟器检测隐藏
-    var hideMagisk = true                       // Magisk检测隐藏
-    var fakeDevice = true                       // 伪设备信息
+    // ====== 检测开�?======
+    var enabled = true                          // 总开�?
+    var hideXposed = true                       // Xposed检测隐�?
+    var hideRoot = true                         // Root检测隐�? 
+    var hideDebug = true                        // Debug检测隐�?
+    var hideFiles = true                        // 文件/目录检测隐�?
+    var hideProps = true                        // SystemProperties检测隐�?
+    var hideSELinux = true                      // SELinux状态隐�?
+    var hideProc = true                         // /proc/ 检测隐�?
+    var hideNative = true                       // Native层检测隐�?
+    var hideSignature = true                    // 签名检测隐�?
+    var hideApk = true                          // APK存在性检测隐�?
+    var hideClassLoader = true                  // ClassLoader检测隐�?
+    var hideMemory = true                       // 内存检测隐�?
+    var hideTrace = true                        // 栈跟踪检测隐�?
+    var hideNetwork = true                      // 网络检测隐�?
+    var hideBattery = true                      // 电池状态检测隐�?
+    var hide模拟�?= true                        // 模拟器检测隐�?
+    var hideMagisk = true                       // Magisk检测隐�?
+    var fakeDevice = true                       // 伪设备信�?
     var fakeFramework = true                    // 伪Framework版本
     var hookSign = true                         // Hook签名获取
     
     // LSPosed特定
     var hideLSPosed = true                      // LSPosed痕迹隐藏
     
-    // 外置qsign服务器
+    // 外置qsign服务�?
     var qsignServerUrl = "http://127.0.0.1:8080"
     
-    // 远程qsign开关
+    // 远程qsign开�?
     var useRemoteQSign = true
     
     // 调试日志
     var debugLog = false
     
-    // ====== 自动检测开关 ======
-    var autoDetectJNI = true // 自动检测JNI类注册
+    // ====== 自动检测开�?======
+    var autoDetectJNI = true // 自动检测JNI类注�?
     var autoDetectNatives = true // 自动检测Native方法注册
     var autoDetectO3Env = true // 自动检测o3环境组包方法
-    var autoDetectEnvPack = true // 自动检测环境组包（全部参数）
-    var detectOutputDir = "/sdcard/Android/data/moe.fuqiuluo.shamrock/files/detect/" // 检测结果输出目录
+    var autoDetectEnvPack = true // 自动检测环境组包（全部参数�?
+    var detectOutputDir = "/sdcard/Android/data/moe.fuqiuluo.shamrock/files/detect/" // 检测结果输出目�?
 }
 
 @Suppress("UNCHECKED_CAST", "NAME_SHADOWING")
@@ -133,7 +133,7 @@ internal class AntiDetection : IAction {
             return
         }
         
-        // 防止重复初始化
+        // 防止重复初始�?
         if (!isInitialized.compareAndSet(false, true)) {
             log("AntiDetection already initialized")
             return
@@ -151,25 +151,25 @@ internal class AntiDetection : IAction {
             // 第一阶段：核心检测隐藏（最早执行）
             hookCoreDetection()
             
-            // 第二阶段：文件/路径检测隐藏
+            // 第二阶段：文�?路径检测隐�?
             if (AntiDetectionConfig.hideFiles) hookFileDetection()
             
-            // 第三阶段：系统属性检测隐藏
+            // 第三阶段：系统属性检测隐�?
             if (AntiDetectionConfig.hideProps) hookSystemProperties()
             
-            // 第四阶段：Native/Proc检测隐藏
+            // 第四阶段：Native/Proc检测隐�?
             if (AntiDetectionConfig.hideProc || AntiDetectionConfig.hideNative) hookProcDetection()
             
-            // 第五阶段：PackageManager检测隐藏
+            // 第五阶段：PackageManager检测隐�?
             if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideSignature) hookPackageDetection()
             
-            // 第六阶段：模拟器检测隐藏
-            if (AntiDetectionConfig.hide模拟器) hookEmulatorDetection()
+            // 第六阶段：模拟器检测隐�?
+            if (AntiDetectionConfig.hide模拟�? hookEmulatorDetection()
             
             // 第七阶段：Magisk特定隐藏
             if (AntiDetectionConfig.hideMagisk) hookMagiskDetection()
             
-            // 第八阶段：设备信息伪装
+            // 第八阶段：设备信息伪�?
             if (AntiDetectionConfig.fakeDevice) hookDeviceFaking()
             
             // 第九阶段：签名验证Hook
@@ -178,7 +178,7 @@ internal class AntiDetection : IAction {
             // 第十阶段：FEKit Sign Hook（最重要的部分）
             if (AntiDetectionConfig.hookSign) hookFEKitSign()
             
-            // 第十一阶段：内存和网络检测
+            // 第十一阶段：内存和网络检�?
             if (AntiDetectionConfig.hideMemory) hookMemoryDetection()
             if (AntiDetectionConfig.hideNetwork) hookNetworkDetection()
             
@@ -188,22 +188,22 @@ internal class AntiDetection : IAction {
             // 第十三阶段：Framework版本伪装
             if (AntiDetectionConfig.fakeFramework) hookFrameworkVersion()
         
-        // 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg）
+        // 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg�?
         if (AntiDetectionConfig.autoDetectJNI || AntiDetectionConfig.autoDetectNatives || 
             AntiDetectionConfig.autoDetectO3Env || AntiDetectionConfig.autoDetectEnvPack) {
             hookAutoDetect(ctx)
         }
         if (AntiDetectionConfig.debugLog) {
-            XposedBridge.log("[$TAG] $msg")
-        }
-    }
-    
-    // ==================== 第一阶段：核心检测 ====================
-    private fun hookCoreDetection() {
-        log("[Phase 1] Hooking core detection mechanisms...")
+    XposedBridge.log("[$TAG] $msg")
+}
+} catch (e: Throwable) {
+    log("AntiDetection Error: ${e.message}")
+    XposedBridge.log("[$TAG] AntiDetection Error: ${e.message}")
+}
+// ==================== ��һ�׶Σ����ļ�� ====================
         
         try {
-            // Hook Class.forName 隐藏Xposed类
+            // Hook Class.forName 隐藏Xposed�?
             XposedHelpers.findAndHookMethod(
                 Class::class.java, "forName", String::class.java,
                 Boolean::class.java, ClassLoader::class.java,
@@ -263,7 +263,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第二阶段：文件检测 ====================
+    // ==================== 第二阶段：文件检�?====================
     private fun hookFileDetection() {
         log("[Phase 2] Hooking file detection...")
         
@@ -354,7 +354,7 @@ internal class AntiDetection : IAction {
                         if (path.contains("/proc/") || path.contains("xposed") ||
                             path.contains("magisk")) {
                             log("Block file read: $path")
-                            // 让它读不到有效内容
+                            // 让它读不到有效内�?
                         }
                     } catch (e: Throwable) {}
                 }
@@ -366,7 +366,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第三阶段：系统属性 ====================
+    // ==================== 第三阶段：系统属�?====================
     private fun hookSystemProperties() {
         log("[Phase 3] Hooking system properties...")
         
@@ -386,7 +386,7 @@ internal class AntiDetection : IAction {
                         try {
                             val key = param.args[0] as? String ?: return
                             
-                            // 隐藏Xposed属性
+                            // 隐藏Xposed属�?
                             if (AntiDetectionConfig.hideXposed) {
                                 val xposedProps = listOf(
                                     "xposedmodule", "xposedversion", "xposedversionmin",
@@ -403,7 +403,7 @@ internal class AntiDetection : IAction {
                                 }
                             }
                             
-                            // 隐藏Magisk属性
+                            // 隐藏Magisk属�?
                             if (AntiDetectionConfig.hideMagisk) {
                                 val magiskProps = listOf(
                                     "ro.bootimage.build.display.id",
@@ -442,7 +442,7 @@ internal class AntiDetection : IAction {
                                         "xposedmodule", "xposedversion", "in_xposed_mode"
                                     )
                                     if (xposedProps.any { key == it }) {
-                                        param.result = param.args[1] // 返回默认值
+                                        param.result = param.args[1] // 返回默认�?
                                         return
                                     }
                                 }
@@ -478,7 +478,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第四阶段：Proc/Native检测 ====================
+    // ==================== 第四阶段：Proc/Native检�?====================
     private fun hookProcDetection() {
         log("[Phase 4] Hooking proc/native detection...")
         
@@ -527,7 +527,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第五阶段：PackageManager检测 ====================
+    // ==================== 第五阶段：PackageManager检�?====================
     private fun hookPackageDetection() {
         log("[Phase 5] Hooking package detection...")
         
@@ -574,7 +574,7 @@ internal class AntiDetection : IAction {
                     Integer::class.java, object : XC_MethodHook() {
                         override fun beforeHookedMethod(param: MethodHookParam) {
                             try {
-                                // 过滤结果在afterHook中处理
+                                // 过滤结果在afterHook中处�?
                             } catch (e: Throwable) {}
                         }
                         
@@ -600,7 +600,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第六阶段：模拟器检测 ====================
+    // ==================== 第六阶段：模拟器检�?====================
     private fun hookEmulatorDetection() {
         log("[Phase 6] Hooking emulator detection...")
         
@@ -623,7 +623,7 @@ internal class AntiDetection : IAction {
                                     try {
                                         val f = param.args[0] as? String
                                         if (f == fieldName) {
-                                            // 这里可以返回真实值避免误判
+                                            // 这里可以返回真实值避免误�?
                                             // 模拟器检测通常寻找特定字符串如 "goldfish", "sdk"
                                         }
                                     } catch (e: Throwable) {}
@@ -633,14 +633,14 @@ internal class AntiDetection : IAction {
                 } catch (e: Throwable) {}
             }
             
-            // Hook Build.VERSION.SDK_INT 总是返回安全值
+            // Hook Build.VERSION.SDK_INT 总是返回安全�?
             XposedBridge.hookAllMethods(Build.VERSION::class.java, "getInt",
                 object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         try {
                             val name = param.args[0] as? String
                             if (name == "SDK_INT") {
-                                // 不要修改SDK版本，可能导致其他问题
+                                // 不要修改SDK版本，可能导致其他问�?
                             }
                         } catch (e: Throwable) {}
                     }
@@ -652,7 +652,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第七阶段：Magisk检测 ====================
+    // ==================== 第七阶段：Magisk检�?====================
     private fun hookMagiskDetection() {
         log("[Phase 7] Hooking Magisk detection...")
         
@@ -697,13 +697,13 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第八阶段：设备信息伪装 ====================
+    // ==================== 第八阶段：设备信息伪�?====================
     private fun hookDeviceFaking() {
         log("[Phase 8] Hooking device faking...")
         
         try {
-            // Build.TAGS 通常是 "test-keys" 或 "release-keys"
-            // 模拟器检测会检查这个
+            // Build.TAGS 通常�?"test-keys" �?"release-keys"
+            // 模拟器检测会检查这�?
             try {
                 val tagsField = Build::class.java.getDeclaredField("TAGS")
                 tagsField.isAccessible = true
@@ -713,8 +713,8 @@ internal class AntiDetection : IAction {
                 }
             } catch (e: Throwable) {}
             
-            // Build.BOARD, Build.DEVICE 等检查
-            // 如果是常见模拟器型号，可以修改
+            // Build.BOARD, Build.DEVICE 等检�?
+            // 如果是常见模拟器型号，可以修�?
             
             log("[Phase 8] Device faking hooks installed")
         } catch (e: Throwable) {
@@ -722,7 +722,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第九阶段：签名验证 ====================
+    // ==================== 第九阶段：签名验�?====================
     private fun hookSignatureVerification() {
         log("[Phase 9] Hooking signature verification...")
         
@@ -740,7 +740,7 @@ internal class AntiDetection : IAction {
                             try {
                                 val flags = param.args[1] as? Int ?: return
                                 // PackageManager.GET_SIGNATURES = 0x00000040
-                                // 如果请求签名，可能是在检测
+                                // 如果请求签名，可能是在检�?
                             } catch (e: Throwable) {}
                         }
                     })
@@ -752,7 +752,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第十阶段：FEKit Sign Hook（最关键）====================
+    // ==================== 第十阶段：FEKit Sign Hook（最关键�?===================
     private fun hookFEKitSign() {
         log("[Phase 10] Hooking FEKit sign mechanism...")
         
@@ -770,7 +770,7 @@ internal class AntiDetection : IAction {
                 return
             }
             
-            // 2. 加载FEKit类（来自qqinterface）
+            // 2. 加载FEKit类（来自qqinterface�?
             val feKitClass = try {
                 qqClassLoader.loadClass("com.tencent.mobileqq.fe.FEKit")
             } catch (e: Throwable) {
@@ -840,8 +840,8 @@ internal class AntiDetection : IAction {
                                 log("FEKit.getSign intercept: cmd=$cmd, uin=$uin, seq=$seq, buffer=${buffer.size}")
                                 
                                 if (AntiDetectionConfig.useRemoteQSign) {
-                                    // 阻止直接调用，改为远程获取
-                                    // 注意：需要返回才能让调用者使用结果
+                                    // 阻止直接调用，改为远程获�?
+                                    // 注意：需要返回才能让调用者使用结�?
                                 }
                             } catch (e: Throwable) {
                                 log("Error in getSign before: ${e.message}")
@@ -982,12 +982,12 @@ internal class AntiDetection : IAction {
         return hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
     }
     
-    // ==================== 第十一阶段：内存检测 ====================
+    // ==================== 第十一阶段：内存检�?====================
     private fun hookMemoryDetection() {
         log("[Phase 11] Hooking memory detection...")
         
         try {
-            // /proc/meminfo 检测
+            // /proc/meminfo 检�?
             // 通常模拟器会有异常的meminfo
             
             XposedBridge.hookAllMethods(File::class.java, "exists", object : XC_MethodHook() {
@@ -997,7 +997,7 @@ internal class AntiDetection : IAction {
                         val path = file.absolutePath ?: return
                         // 隐藏meminfo中的异常数据
                         if (path.contains("/proc/meminfo")) {
-                            // 伪装内存大小让检测失效
+                            // 伪装内存大小让检测失�?
                         }
                     } catch (e: Throwable) {}
                 }
@@ -1008,7 +1008,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第十二阶段：网络检测 ====================
+    // ==================== 第十二阶段：网络检�?====================
     private fun hookNetworkDetection() {
         log("[Phase 12] Hooking network detection...")
         
@@ -1039,9 +1039,9 @@ internal class AntiDetection : IAction {
         log("[Phase 13] Hooking LSPosed specific detection...")
         
         try {
-            // LSPosed会在一些地方留下痕迹
+            // LSPosed会在一些地方留下痕�?
             
-            // 1. LSPosed manager app检测
+            // 1. LSPosed manager app检�?
             try {
                 val lpClass = Class.forName("org.lsposed.lspd.LSPosedManager")
                 XposedBridge.hookAllMethods(lpClass, "getInstance", object : XC_MethodHook() {
@@ -1056,7 +1056,7 @@ internal class AntiDetection : IAction {
                 val lspClass = Class.forName("org.lsposed.lspd.hooks.LSPHooks")
                 XposedBridge.hookAllMethods(lspClass, "init", object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
-                        // 阻止LSPosed hooks初始化
+                        // 阻止LSPosed hooks初始�?
                     }
                 })
             } catch (e: Throwable) {}
@@ -1078,7 +1078,7 @@ internal class AntiDetection : IAction {
             
             val versionClass = Build.VERSION::class.java
             
-            // 确保安全补丁级别看起来正常
+            // 确保安全补丁级别看起来正�?
             try {
                 val securityPatchField = versionClass.getDeclaredField("SECURITY_PATCH")
                 securityPatchField.isAccessible = true
@@ -1091,7 +1091,7 @@ internal class AntiDetection : IAction {
         }
     }
     
-    // ==================== 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg） ====================
+    // ==================== 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg�?====================
     private fun hookAutoDetect(ctx: Context) {
         log("[Phase 14] Auto-detection for Unidbg repair starting...")
         try {
@@ -1101,17 +1101,17 @@ internal class AntiDetection : IAction {
                 detectDir.mkdirs()
             }
             
-            // 1. JNI类注册检测
+            // 1. JNI类注册检�?
             if (AntiDetectionConfig.autoDetectJNI) {
                 startJNIDetection()
             }
             
-            // 2. Native方法注册检测
+            // 2. Native方法注册检�?
             if (AntiDetectionConfig.autoDetectNatives) {
                 startNativesDetection()
             }
             
-            // 3. o3环境组包方法检测
+            // 3. o3环境组包方法检�?
             if (AntiDetectionConfig.autoDetectO3Env || AntiDetectionConfig.autoDetectEnvPack) {
                 startO3EnvDetection(ctx)
             }
@@ -1123,7 +1123,7 @@ internal class AntiDetection : IAction {
         }
     }
 
-    // ==================== JNI类注册检测 ====================
+    // ==================== JNI类注册检�?====================
     private fun startJNIDetection() {
         log("[AutoDetect] Starting JNI FindClass detection...")
         try {
@@ -1151,7 +1151,7 @@ internal class AntiDetection : IAction {
         }
     }
 
-    // ==================== Native方法注册检测 ====================
+    // ==================== Native方法注册检�?====================
     private fun startNativesDetection() {
         log("[AutoDetect] Starting Native method detection...")
         try {
@@ -1185,7 +1185,7 @@ internal class AntiDetection : IAction {
         }
     }
 
-    // ==================== o3环境组包方法检测 ====================
+    // ==================== o3环境组包方法检�?====================
     private var o3EnvData = StringBuilder()
 
     private fun startO3EnvDetection(ctx: Context) {
@@ -1199,7 +1199,7 @@ internal class AntiDetection : IAction {
             }
             
             // 检测关键类
-            // 1. QQSecuritySign - 签名类
+            // 1. QQSecuritySign - 签名�?
             val securitySignClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.sign.QQSecuritySign")
             if (securitySignClass != null) {
                 log("[AutoDetect] Found: QQSecuritySign")
@@ -1207,7 +1207,7 @@ internal class AntiDetection : IAction {
                 detectMethods(securitySignClass, "QQSecuritySign")
             }
             
-            // 2. QSec - 安全类
+            // 2. QSec - 安全�?
             val qsecClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecurity.QSec")
             if (qsecClass != null) {
                 log("[AutoDetect] Found: QSec")
@@ -1223,7 +1223,7 @@ internal class AntiDetection : IAction {
                 detectMethods(qsecConfigClass, "QSecConfig")
             }
             
-            // 4. Dtc - DTC类
+            // 4. Dtc - DTC�?
             val dtcClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.dt.app.Dtc")
             if (dtcClass != null) {
                 log("[AutoDetect] Found: Dtc")
@@ -1402,7 +1402,7 @@ internal class AntiDetection : IAction {
                 // Hook getSign方法 - 签名获取
                 log("[AutoDetect] FEKit method: $methodName (${paramCount} params)")
             
-                // 记录所有方法
+                // 记录所有方�?
                 saveToFile("feKit_methods.txt", "$methodName|${paramCount}|${method.parameterTypes.joinToString(",") { it.name }}\n", true)
             
                 // Hook getSign - 最关键
@@ -1444,7 +1444,7 @@ internal class AntiDetection : IAction {
                                         sb.append("result hex: ${result.joinToString("") { String.format("%02X", it) }}\n")
                                     } else {
                                         sb.append("result toString: $result\n")
-                                        // 尝试获取对象的字段
+                                        // 尝试获取对象的字�?
                                         val resultClass = result.javaClass
                                         resultClass.declaredFields.forEach { field ->
                                             field.isAccessible = true
@@ -1507,3 +1507,4 @@ internal class AntiDetection : IAction {
         }
     }
 }
+
