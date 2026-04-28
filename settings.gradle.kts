@@ -1,8 +1,5 @@
 pluginManagement {
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
         google()
         mavenCentral()
         gradlePluginPortal()
@@ -12,21 +9,17 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
-        maven { url = uri("https://maven.aliyun.com/repository/public") }
         google()
         mavenCentral()
-        maven (url = "https://maven.pkg.jetbrains.space/public/p/ktor/eap")
-        maven (url = "https://api.xposed.info/" )
-        maven (url = "https://jitpack.io" )
+        maven(url = "https://maven.pkg.jetbrains.space/public/p/ktor/eap")
+        maven(url = "https://api.xposed.info/")
+        maven(url = "https://jitpack.io")
     }
 }
 
 buildscript {
     repositories {
-        maven { url = uri("https://maven.aliyun.com/repository/google") }
-        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        google()
         mavenCentral()
         maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
     }
@@ -36,7 +29,4 @@ buildscript {
 }
 
 rootProject.name = "Shamrock"
-include(
-    ":app",
-    ":xposed"
-)
+include(":app", ":xposed")
