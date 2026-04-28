@@ -54,7 +54,7 @@ internal object AntiDetectionConfig {
     var hideTrace = true                        // 栈跟踪检测隐�?
     var hideNetwork = true                      // 网络检测隐�?
     var hideBattery = true                      // 电池状态检测隐�?
-    var hide模拟�?= true                        // 模拟器检测隐�?
+    var hideEmulator = true                        // 模拟器检测隐�?
     var hideMagisk = true                       // Magisk检测隐�?
     var fakeDevice = true                       // 伪设备信�?
     var fakeFramework = true                    // 伪Framework版本
@@ -164,7 +164,7 @@ internal class AntiDetection : IAction {
             if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideSignature) hookPackageDetection()
             
             // 第六阶段：模拟器检测隐�?
-            if (AntiDetectionConfig.hide模拟�? hookEmulatorDetection()
+            if (AntiDetectionConfig.hideEmulator) hookEmulatorDetection()
             
             // 第七阶段：Magisk特定隐藏
             if (AntiDetectionConfig.hideMagisk) hookMagiskDetection()
