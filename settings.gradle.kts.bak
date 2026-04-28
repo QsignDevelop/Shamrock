@@ -1,0 +1,42 @@
+pluginManagement {
+    repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        maven { url = uri("https://maven.aliyun.com/repository/gradle-plugin") }
+        google()
+        mavenCentral()
+        gradlePluginPortal()
+    }
+}
+
+dependencyResolutionManagement {
+    repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+    repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        maven { url = uri("https://maven.aliyun.com/repository/public") }
+        google()
+        mavenCentral()
+        maven (url = "https://maven.pkg.jetbrains.space/public/p/ktor/eap")
+        maven (url = "https://api.xposed.info/" )
+        maven (url = "https://jitpack.io" )
+    }
+}
+
+buildscript {
+    repositories {
+        maven { url = uri("https://maven.aliyun.com/repository/google") }
+        maven { url = uri("https://maven.aliyun.com/repository/central") }
+        mavenCentral()
+        maven { url = uri("https://storage.googleapis.com/r8-releases/raw") }
+    }
+    dependencies {
+        classpath("com.android.tools:r8:8.2.26")
+    }
+}
+
+rootProject.name = "Shamrock"
+include(
+    ":app",
+    ":xposed"
+)

@@ -471,4 +471,49 @@ object ShamrockConfig {
         preferences.edit().putString("anti_qsign_url", v).apply()
         pushUpdate(ctx)
     }
+    
+    // ====== 自动检测配置（用于修复Unidbg） ======
+    fun isAutoDetectJNI(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("auto_detect_jni", true)
+    }
+    
+    fun setAutoDetectJNI(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("auto_detect_jni", v).apply()
+        pushUpdate(ctx)
+    }
+    
+    fun isAutoDetectNatives(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("auto_detect_natives", true)
+    }
+    
+    fun setAutoDetectNatives(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("auto_detect_natives", v).apply()
+        pushUpdate(ctx)
+    }
+    
+    fun isAutoDetectO3Env(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("auto_detect_o3_env", true)
+    }
+    
+    fun setAutoDetectO3Env(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("auto_detect_o3_env", v).apply()
+        pushUpdate(ctx)
+    }
+    
+    fun isAutoDetectEnvPack(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("auto_detect_env_pack", true)
+    }
+    
+    fun setAutoDetectEnvPack(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("auto_detect_env_pack", v).apply()
+        pushUpdate(ctx)
+    }
 }

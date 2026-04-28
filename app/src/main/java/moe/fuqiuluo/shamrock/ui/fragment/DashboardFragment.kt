@@ -369,6 +369,43 @@ private fun FunctionCard(
                 return@Function true
             }
         }
+        
+        // 自动检测配置（用于修复Unidbg）
+        Function(
+            title = "自动检测JNI类",
+            desc = "自动检测QQ加载的JNI类，用于修复Unidbg",
+            isSwitch = ShamrockConfig.isAutoDetectJNI(ctx)
+        ) {
+            ShamrockConfig.setAutoDetectJNI(ctx, it)
+            return@Function true
+        }
+        
+        Function(
+            title = "自动检测Natives",
+            desc = "自动检测QQ加载的Native库",
+            isSwitch = ShamrockConfig.isAutoDetectNatives(ctx)
+        ) {
+            ShamrockConfig.setAutoDetectNatives(ctx, it)
+            return@Function true
+        }
+        
+        Function(
+            title = "自动检测o3环境",
+            desc = "自动检测o3环境组包方法",
+            isSwitch = ShamrockConfig.isAutoDetectO3Env(ctx)
+        ) {
+            ShamrockConfig.setAutoDetectO3Env(ctx, it)
+            return@Function true
+        }
+        
+        Function(
+            title = "自动检测完整环境组包",
+            desc = "Hook FEKit获取完整参数和返回值，最详细版本",
+            isSwitch = ShamrockConfig.isAutoDetectEnvPack(ctx)
+        ) {
+            ShamrockConfig.setAutoDetectEnvPack(ctx, it)
+            return@Function true
+        }
     }
 }
 

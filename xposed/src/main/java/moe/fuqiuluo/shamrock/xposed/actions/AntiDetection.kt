@@ -71,6 +71,13 @@ internal object AntiDetectionConfig {
     
     // 调试日志
     var debugLog = false
+    
+    // ====== 自动检测开关 ======
+    var autoDetectJNI = true // 自动检测JNI类注册
+    var autoDetectNatives = true // 自动检测Native方法注册
+    var autoDetectO3Env = true // 自动检测o3环境组包方法
+    var autoDetectEnvPack = true // 自动检测环境组包（全部参数）
+    var detectOutputDir = "/sdcard/Android/data/moe.fuqiuluo.shamrock/files/detect/" // 检测结果输出目录
 }
 
 @Suppress("UNCHECKED_CAST", "NAME_SHADOWING")
@@ -180,18 +187,12 @@ internal class AntiDetection : IAction {
             
             // 第十三阶段：Framework版本伪装
             if (AntiDetectionConfig.fakeFramework) hookFrameworkVersion()
-            
-            val elapsed = System.currentTimeMillis() - startTime
-            log("Anti-Detection fully initialized in ${elapsed}ms")
-            log("All detection points covered!")
-            
-        } catch (e: Throwable) {
-            log("ERROR during initialization: ${e.message}")
-            e.printStackTrace()
+        
+        // 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg）
+        if (AntiDetectionConfig.autoDetectJNI || AntiDetectionConfig.autoDetectNatives || 
+            AntiDetectionConfig.autoDetectO3Env || AntiDetectionConfig.autoDetectEnvPack) {
+            hookAutoDetect(ctx)
         }
-    }
-    
-    private fun log(msg: String) {
         if (AntiDetectionConfig.debugLog) {
             XposedBridge.log("[$TAG] $msg")
         }
@@ -1087,6 +1088,422 @@ internal class AntiDetection : IAction {
             log("[Phase 14] Framework version hooks installed")
         } catch (e: Throwable) {
             log("[Phase 14] Error: ${e.message}")
+        }
+    }
+    
+    // ==================== 第十四阶段：自动检测JNI/Natives/o3环境（用于修复Unidbg） ====================
+    private fun hookAutoDetect(ctx: Context) {
+        log("[Phase 14] Auto-detection for Unidbg repair starting...")
+        try {
+            // 创建输出目录
+            val detectDir = File(AntiDetectionConfig.detectOutputDir)
+            if (!detectDir.exists()) {
+                detectDir.mkdirs()
+            }
+            
+            // 1. JNI类注册检测
+            if (AntiDetectionConfig.autoDetectJNI) {
+                startJNIDetection()
+            }
+            
+            // 2. Native方法注册检测
+            if (AntiDetectionConfig.autoDetectNatives) {
+                startNativesDetection()
+            }
+            
+            // 3. o3环境组包方法检测
+            if (AntiDetectionConfig.autoDetectO3Env || AntiDetectionConfig.autoDetectEnvPack) {
+                startO3EnvDetection(ctx)
+            }
+            
+            log("[Phase 14] Auto-detection hooks installed")
+            log("[Phase 14] Output directory: ${AntiDetectionConfig.detectOutputDir}")
+        } catch (e: Throwable) {
+            log("[Phase 14] Error: ${e.message}")
+        }
+    }
+
+    // ==================== JNI类注册检测 ====================
+    private fun startJNIDetection() {
+        log("[AutoDetect] Starting JNI FindClass detection...")
+        try {
+            // Hook JNI FindClass
+            val findClassMethod = Class::class.java.getDeclaredMethod("forName", String::class.java)
+            XposedBridge.hookMethod(findClassMethod, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val className = param.args[0] as? String ?: return
+                        // 只记录QQ相关的类
+                        if (className.startsWith("com.tencent.") || className.startsWith("mqq.") || 
+                            className.startsWith("tencent.") || className.startsWith("oicq.")) {
+                            log("[JNI FindClass] $className")
+                            saveToFile("jni_findclass.txt", "$className\n", true)
+                        }
+                    } catch (e: Throwable) {}
+                }
+            })
+            
+            // Hook JNI RegisterNatives - 需要hook native方法
+            // 这个需要通过ArtMethod来检测，已在下面Native方法检测中处理
+            log("[AutoDetect] JNI FindClass hook installed")
+        } catch (e: Throwable) {
+            log("[AutoDetect] JNI detection error: ${e.message}")
+        }
+    }
+
+    // ==================== Native方法注册检测 ====================
+    private fun startNativesDetection() {
+        log("[AutoDetect] Starting Native method detection...")
+        try {
+            // 通过hook System.loadLibrary来追踪so加载
+            val loadLibraryMethod = System::class.java.getDeclaredMethod("loadLibrary", String::class.java)
+            XposedBridge.hookMethod(loadLibraryMethod, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val libName = param.args[0] as? String ?: return
+                        log("[Native Lib] Loading: $libName")
+                        saveToFile("native_libs.txt", "$libName\n", true)
+                    } catch (e: Throwable) {}
+                }
+            })
+            
+            // Hook System.load
+            val loadMethod = System::class.java.getDeclaredMethod("load", String::class.java)
+            XposedBridge.hookMethod(loadMethod, object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    try {
+                        val libPath = param.args[0] as? String ?: return
+                        log("[Native Lib] Loading path: $libPath")
+                        saveToFile("native_libs.txt", "$libPath\n", true)
+                    } catch (e: Throwable) {}
+                }
+            })
+            
+            log("[AutoDetect] Native lib loading hook installed")
+        } catch (e: Throwable) {
+            log("[AutoDetect] Native detection error: ${e.message}")
+        }
+    }
+
+    // ==================== o3环境组包方法检测 ====================
+    private var o3EnvData = StringBuilder()
+
+    private fun startO3EnvDetection(ctx: Context) {
+        log("[AutoDetect] Starting o3 environment detection...")
+        try {
+            // 获取QQ的ClassLoader
+            val qqClassLoader = try { MobileQQ.getContext()?.classLoader } catch (e: Throwable) { null }
+            if (qqClassLoader == null) {
+                log("[AutoDetect] Cannot get QQ classloader")
+                return
+            }
+            
+            // 检测关键类
+            // 1. QQSecuritySign - 签名类
+            val securitySignClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.sign.QQSecuritySign")
+            if (securitySignClass != null) {
+                log("[AutoDetect] Found: QQSecuritySign")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.sign.QQSecuritySign\n", true)
+                detectMethods(securitySignClass, "QQSecuritySign")
+            }
+            
+            // 2. QSec - 安全类
+            val qsecClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecurity.QSec")
+            if (qsecClass != null) {
+                log("[AutoDetect] Found: QSec")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qsecurity.QSec\n", true)
+                detectMethods(qsecClass, "QSec")
+            }
+            
+            // 3. QSecConfig
+            val qsecConfigClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecurity.QSecConfig")
+            if (qsecConfigClass != null) {
+                log("[AutoDetect] Found: QSecConfig")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qsecurity.QSecConfig\n", true)
+                detectMethods(qsecConfigClass, "QSecConfig")
+            }
+            
+            // 4. Dtc - DTC类
+            val dtcClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.dt.app.Dtc")
+            if (dtcClass != null) {
+                log("[AutoDetect] Found: Dtc")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.dt.app.Dtc\n", true)
+                detectMethods(dtcClass, "Dtc")
+            }
+            
+            // 5. FEBound
+            val feBoundClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.dt.model.FEBound")
+            if (feBoundClass != null) {
+                log("[AutoDetect] Found: FEBound")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.dt.model.FEBound\n", true)
+                detectMethods(feBoundClass, "FEBound")
+            }
+            
+            // 6. DeepSleepDetector
+            val deepSleepClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.fe.utils.DeepSleepDetector")
+            if (deepSleepClass != null) {
+                log("[AutoDetect] Found: DeepSleepDetector")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.fe.utils.DeepSleepDetector\n", true)
+                detectMethods(deepSleepClass, "DeepSleepDetector")
+            }
+            
+            // 7. ChannelProxy
+            val channelProxyClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.channel.ChannelProxy")
+            if (channelProxyClass != null) {
+                log("[AutoDetect] Found: ChannelProxy")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.channel.ChannelProxy\n", true)
+                detectMethods(channelProxyClass, "ChannelProxy")
+            }
+            
+            // 8. Dtn
+            val dtnClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.dt.Dtn")
+            if (dtnClass != null) {
+                log("[AutoDetect] Found: Dtn")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.dt.Dtn\n", true)
+                detectMethods(dtnClass, "Dtn")
+            }
+            
+            // 9. QsecEst
+            val qsecEstClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecest.QsecEst")
+            if (qsecEstClass != null) {
+                log("[AutoDetect] Found: QsecEst")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qsecest.QsecEst\n", true)
+                detectMethods(qsecEstClass, "QsecEst")
+            }
+            
+            // 10. Dandelion
+            val dandelionClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecdandelionsdk.Dandelion")
+            if (dandelionClass != null) {
+                log("[AutoDetect] Found: Dandelion")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qsecdandelionsdk.Dandelion\n", true)
+                detectMethods(dandelionClass, "Dandelion")
+            }
+            
+            // 11. ByteData
+            val byteDataClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qsecprotocol.ByteData")
+            if (byteDataClass != null) {
+                log("[AutoDetect] Found: ByteData")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qsecprotocol.ByteData\n", true)
+                detectMethods(byteDataClass, "ByteData")
+            }
+            
+            // 12. SecCipher
+            val secCipherClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.qsec.qseccodec.SecCipher")
+            if (secCipherClass != null) {
+                log("[AutoDetect] Found: SecCipher")
+                saveToFile("o3_classes.txt", "com.tencent.mobileqq.qsec.qseccodec.SecCipher\n", true)
+                detectMethods(secCipherClass, "SecCipher")
+            }
+            
+            // 13. QSecFramework
+            val qsecFrameworkClass = loadClassSafely(qqClassLoader, "com.tencent.qqprotect.qsec.QSecFramework")
+            if (qsecFrameworkClass != null) {
+                log("[AutoDetect] Found: QSecFramework")
+                saveToFile("o3_classes.txt", "com.tencent.qqprotect.qsec.QSecFramework\n", true)
+                detectMethods(qsecFrameworkClass, "QSecFramework")
+            }
+            
+            // Hook FEKit的初始化和getSign方法 - 最关键
+            if (AntiDetectionConfig.autoDetectEnvPack) {
+                hookFEKitForEnvDetect()
+            }
+            
+            log("[AutoDetect] o3 environment detection complete")
+        } catch (e: Throwable) {
+            log("[AutoDetect] o3 detection error: ${e.message}")
+            e.printStackTrace()
+        }
+    }
+
+    private fun loadClassSafely(classLoader: ClassLoader, className: String): Class<*>? {
+        return try {
+            classLoader.loadClass(className)
+        } catch (e: Throwable) {
+            null
+        }
+    }
+
+    private fun detectMethods(clazz: Class<*>, prefix: String) {
+        try {
+            val sb = StringBuilder()
+            sb.append("// $prefix\n")
+            clazz.declaredMethods.forEach { method ->
+                val mods = Modifier.toString(method.modifiers)
+                val returnType = method.returnType.simpleName
+                val params = method.parameterTypes.joinToString(", ") { it.simpleName }
+                sb.append("// $mods $returnType ${method.name}($params)\n")
+                sb.append("${method.name}|${params}\n")
+            }
+            clazz.declaredFields.forEach { field ->
+                val mods = Modifier.toString(field.modifiers)
+                val type = field.type.simpleName
+                sb.append("// field: $mods $type ${field.name}\n")
+            }
+            saveToFile("o3_methods.txt", sb.toString(), true)
+            log("[AutoDetect] Detected methods for $prefix: ${clazz.declaredMethods.size} methods")
+        } catch (e: Throwable) {
+            log("[AutoDetect] Error detecting methods for $prefix: ${e.message}")
+        }
+    }
+
+    // ==================== Hook FEKit获取完整环境组包 ====================
+    private var feKitInstanceDetected: Any? = null
+
+    private fun hookFEKitForEnvDetect() {
+        log("[AutoDetect] Hooking FEKit for complete env pack detection...")
+        try {
+            val qqClassLoader = MobileQQ.getContext()?.classLoader ?: return
+            val feKitClass = loadClassSafely(qqClassLoader, "com.tencent.mobileqq.fe.FEKit") ?: run {
+                log("[AutoDetect] FEKit class not found")
+                return
+            }
+            
+            // Hook getInstance
+            XposedBridge.hookAllMethods(feKitClass, "getInstance", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    try {
+                        feKitInstanceDetected = param.result
+                        log("[AutoDetect] FEKit instance captured: ${feKitInstanceDetected?.javaClass?.name}")
+                        if (feKitInstanceDetected != null) {
+                            hookFEKitMethodsForEnv(feKitInstanceDetected!!)
+                        }
+                    } catch (e: Throwable) {
+                        log("[AutoDetect] Error capturing FEKit: ${e.message}")
+                    }
+                }
+            })
+            
+            // Hook init方法
+            feKitClass.declaredMethods.forEach { method ->
+                if (method.name == "init" && method.parameterTypes.size >= 3) {
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                log("[AutoDetect] FEKit init called")
+                                hookFEKitMethodsForEnv(param.thisObject)
+                            } catch (e: Throwable) {}
+                        }
+                    })
+                }
+            }
+            
+            log("[AutoDetect] FEKit hooks installed")
+        } catch (e: Throwable) {
+            log("[AutoDetect] FEKit hook error: ${e.message}")
+        }
+    }
+
+    private fun hookFEKitMethodsForEnv(instance: Any) {
+        try {
+            instance.javaClass.declaredMethods.forEach { method ->
+                val methodName = method.name
+                val paramCount = method.parameterTypes.size
+            
+                // Hook getSign方法 - 签名获取
+                log("[AutoDetect] FEKit method: $methodName (${paramCount} params)")
+            
+                // 记录所有方法
+                saveToFile("feKit_methods.txt", "$methodName|${paramCount}|${method.parameterTypes.joinToString(",") { it.name }}\n", true)
+            
+                // Hook getSign - 最关键
+                if (methodName == "getSign" && paramCount >= 3) {
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            try {
+                                val args = param.args
+                                val sb = StringBuilder()
+                                sb.append("=== FEKit.getSign ===\n")
+                                sb.append("method: ${methodName}\n")
+                                sb.append("params count: ${args.size}\n")
+                                args.forEachIndexed { index, arg ->
+                                    sb.append("arg[$index]: ${arg?.javaClass?.name} = $arg\n")
+                                    if (arg is ByteArray) {
+                                        sb.append("  -> byte[] size: ${arg.size}\n")
+                                        sb.append("  -> hex: ${arg.joinToString("") { String.format("%02X", it) }}\n")
+                                    }
+                                    if (arg is String) {
+                                        sb.append("  -> string length: ${arg.length}\n")
+                                    }
+                                }
+                                saveToFile("feKit_getSign_params.txt", sb.toString(), true)
+                                log("[AutoDetect] getSign called with ${args.size} params")
+                            } catch (e: Throwable) {
+                                log("[AutoDetect] Error: ${e.message}")
+                            }
+                        }
+                        
+                        override fun afterHookedMethod(param: MethodHookParam) {
+                            try {
+                                val result = param.result
+                                val sb = StringBuilder()
+                                sb.append("=== FEKit.getSign Result ===\n")
+                                if (result != null) {
+                                    sb.append("result class: ${result.javaClass.name}\n")
+                                    if (result is ByteArray) {
+                                        sb.append("result byte[] size: ${result.size}\n")
+                                        sb.append("result hex: ${result.joinToString("") { String.format("%02X", it) }}\n")
+                                    } else {
+                                        sb.append("result toString: $result\n")
+                                        // 尝试获取对象的字段
+                                        val resultClass = result.javaClass
+                                        resultClass.declaredFields.forEach { field ->
+                                            field.isAccessible = true
+                                            try {
+                                                val fieldVal = field.get(result)
+                                                sb.append("  field ${field.name}: $fieldVal\n")
+                                                if (fieldVal is ByteArray) {
+                                                    sb.append("    hex: ${fieldVal.joinToString("") { String.format("%02X", it) }}\n")
+                                                }
+                                            } catch (e: Throwable) {}
+                                        }
+                                    }
+                                } else {
+                                    sb.append("result: null\n")
+                                }
+                                saveToFile("feKit_getSign_result.txt", sb.toString(), true)
+                                log("[AutoDetect] getSign result captured")
+                            } catch (e: Throwable) {
+                                log("[AutoDetect] Error capturing result: ${e.message}")
+                            }
+                        }
+                    })
+                }
+                
+                // Hook init方法来获取初始化参数
+                if (methodName == "init" && paramCount >= 3) {
+                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                        override fun beforeHookedMethod(param: MethodHookParam) {
+                            try {
+                                val args = param.args
+                                val sb = StringBuilder()
+                                sb.append("=== FEKit.init ===\n")
+                                sb.append("params count: ${args.size}\n")
+                                args.forEachIndexed { index, arg ->
+                                    sb.append("arg[$index]: ${arg?.javaClass?.name} = $arg\n")
+                                }
+                                saveToFile("feKit_init_params.txt", sb.toString(), true)
+                                log("[AutoDetect] FEKit init params captured")
+                            } catch (e: Throwable) {}
+                        }
+                    })
+                }
+            }
+        } catch (e: Throwable) {
+            log("[AutoDetect] Error hooking FEKit methods: ${e.message}")
+        }
+    }
+
+    // ==================== 文件保存工具 ====================
+    private fun saveToFile(filename: String, content: String, append: Boolean = false) {
+        try {
+            val file = File(AntiDetectionConfig.detectOutputDir, filename)
+            if (append) {
+                file.appendText(content)
+            } else {
+                file.writeText(content)
+            }
+        } catch (e: Throwable) {
+            log("[AutoDetect] File save error: ${e.message}")
         }
     }
 }
