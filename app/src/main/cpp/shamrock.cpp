@@ -10,15 +10,19 @@
 
 #include "md5.h"
 
+// JNI symbol names follow the new package path moe.RinShiona.Shamrock.*
+// The renamer script only handled .kt/.java text replacements; JNI native
+// symbols (which double-encode underscores and dots) had to be updated by
+// hand. If you rename the package again, update these symbols too.
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_moe_fuqiuluo_shamrock_xposed_actions_PullConfig_testNativeLibrary(JNIEnv *env, jobject thiz) {
-    return env->NewStringUTF("加载Shamrock库成功~");
+Java_moe_RinShiona_Shamrock_xposed_actions_PullConfig_testNativeLibrary(JNIEnv *env, jobject thiz) {
+    return env->NewStringUTF("Shamrock library OK (moe.RinShiona.Shamrock)");
 }
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_moe_fuqiuluo_shamrock_utils_MD5_genFileMd5Hex(JNIEnv *env, jobject thiz, jstring file_path) {
+Java_moe_RinShiona_Shamrock_utils_MD5_genFileMd5Hex(JNIEnv *env, jobject thiz, jstring file_path) {
     auto cPathStr = env->GetStringUTFChars(file_path, nullptr);
     std::filesystem::path filePath(cPathStr);
     if (!std::filesystem::exists(filePath)) {
@@ -39,7 +43,7 @@ Java_moe_fuqiuluo_shamrock_utils_MD5_genFileMd5Hex(JNIEnv *env, jobject thiz, js
 
 extern "C"
 JNIEXPORT jstring JNICALL
-Java_moe_fuqiuluo_shamrock_utils_MD5_getMd5Hex(JNIEnv *env, jobject thiz, jbyteArray bytes) {
+Java_moe_RinShiona_Shamrock_utils_MD5_getMd5Hex(JNIEnv *env, jobject thiz, jbyteArray bytes) {
     auto len = env->GetArrayLength(bytes);
     auto *cBytes = new unsigned char[len];
     env->GetByteArrayRegion(bytes, 0, len, reinterpret_cast<jbyte *>(cBytes));

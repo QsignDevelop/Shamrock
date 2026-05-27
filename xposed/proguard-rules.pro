@@ -179,7 +179,7 @@
 
 -keep class com.arthenica.ffmpegkit.NativeLoader { *; }
 
--keep class moe.fuqiuluo.** { *; }
+-keep class moe.RinShiona.Shamrock.** { *; }
 -keep class com.tencent.** { *; }
 -keep class com.qq.** { *; }
 -keep class com.google.gson.** { *; }
@@ -194,6 +194,6 @@
 }
 -keep class io.netty.** { *; }
 
--keep class moe.fuqiuluo.** implements com.tencent.qqnt.kernel.nativeinterface.** {
+-keep class moe.RinShiona.Shamrock.** implements com.tencent.qqnt.kernel.nativeinterface.** {
     *;
 }

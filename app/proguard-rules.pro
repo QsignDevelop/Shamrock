@@ -199,7 +199,7 @@
 
 -keep class com.arthenica.ffmpegkit.NativeLoader { *; }
 
--keep class moe.fuqiuluo.** { *; }
+-keep class moe.RinShiona.Shamrock.** { *; }
 -keep class com.tencent.** { *; }
 -keep class com.qq.** { *; }
 -keep class com.google.gson.** { *; }

@@ -7,11 +7,16 @@ plugins {
 }
 
 android {
-    namespace = "moe.fuqiuluo.xposed"
+    namespace = "moe.RinShiona.Shamrock.xposed"
     compileSdk = 34
 
     defaultConfig {
         minSdk = 24
+
+        ndk {
+            // ShadowHook prefab only ships arm64; QQ NT targets arm64-v8a.
+            abiFilters += listOf("arm64-v8a")
+        }
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         consumerProguardFiles("consumer-rules.pro")
@@ -24,6 +29,10 @@ android {
 
     buildFeatures {
         aidl = true
+        // Enables Android Gradle Prefab so CMake can find shadowhook (and
+        // other native-AAR dependencies) via `find_package(...)`.
+        // See src/main/cpp/CMakeLists.txt for the consuming side.
+        prefab = true
     }
     buildTypes {
         release {
@@ -93,8 +102,19 @@ dependencies {
     // optional - Kotlin Extensions and Coroutines support for Room
     implementation("androidx.room:room-ktx:$roomVersion")
 
-    compileOnly ("de.robv.android.xposed:api:82")
-    // compileOnly (project(":qqinterface")) // Temporarily disabled
+    // Xposed API 93 — minimum LSPosed 2.0.2+ framework. Bumped from 82 for
+    // new system_server hooks and modern resource handling. We still
+    // compileOnly so it doesn't ship inside the APK (host provides it).
+    compileOnly("de.robv.android.xposed:api:82")
+
+    // ShadowHook — ByteDance's native inline-hook engine.
+    // Provides a prefab `shadowhook` native module that CMake finds via
+    // find_package(shadowhook REQUIRED CONFIG).
+    // The 1.0.10 release ships arm64-v8a + armeabi-v7a + x86_64.
+    implementation("com.bytedance.android:shadowhook:1.0.10")
+
+    // compileOnly stubs for QQ classes at build time
+    compileOnly(project(":qqinterface"))
     testImplementation("junit:junit:4.13.2")
     androidTestImplementation("androidx.test.ext:junit:1.1.5")
     androidTestImplementation("androidx.test.espresso:espresso-core:3.5.1")

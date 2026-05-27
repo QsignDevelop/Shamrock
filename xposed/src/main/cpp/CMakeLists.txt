@@ -1,38 +1,87 @@
-
-# For more information about using CMake with Android Studio, read the
-# documentation: https://d.android.com/studio/projects/add-native-code.html.
-# For more examples on how to use CMake, see https://github.com/android/ndk-samples.
-
-# Sets the minimum CMake version required for this project.
 cmake_minimum_required(VERSION 3.22.1)
 
-# Declares the project name. The project name can be accessed via ${ PROJECT_NAME},
-# Since this is the top level CMakeLists.txt, the project name is also accessible
-# with ${CMAKE_PROJECT_NAME} (both CMake variables are in-sync within the top level
-# build script scope).
-project("xposed")
+# NOTE: project name MUST differ from app/src/main/cpp/CMakeLists.txt which
+# also declares project("shamrock") and builds libshamrock.so. Keeping the
+# same name would yield two libraries with identical SONAME and the wrong
+# one would be packaged into the APK. Use "shamrocknt" — for "9.2.90 NT".
+project("shamrocknt")
 
-# Creates and names a library, sets it as either STATIC
-# or SHARED, and provides the relative paths to its source code.
-# You can define multiple libraries, and CMake builds them for you.
-# Gradle automatically packages shared libraries with your APK.
-#
-# In this top level CMakeLists.txt, ${CMAKE_PROJECT_NAME} is used to define
-# the target library name; in the sub-module's CMakeLists.txt, ${PROJECT_NAME}
-# is preferred for the same purpose.
-#
-# In order to load a library into your app from Java/Kotlin, you must call
-# System.loadLibrary() and pass the name of the library defined here;
-# for GameActivity/NativeActivity derived applications, the same library name must be
-# used in the AndroidManifest.xml file.
+# ---------------------------------------------------------------------------
+# Compiler / link flags
+# ---------------------------------------------------------------------------
+set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+set(CMAKE_CXX_EXTENSIONS OFF)
+set(CMAKE_VISIBILITY_INLINES_HIDDEN ON)
+set(CMAKE_C_VISIBILITY_PRESET hidden)
+set(CMAKE_CXX_VISIBILITY_PRESET hidden)
+
+# Release defaults: small + fast. -fno-rtti / -fno-exceptions cuts ~200KB.
+if(NOT CMAKE_BUILD_TYPE STREQUAL "Debug")
+    add_compile_options(
+        -Os
+        -fno-rtti
+        -fno-exceptions
+        -fdata-sections
+        -ffunction-sections
+        -fno-stack-protector
+        -fomit-frame-pointer
+    )
+    add_link_options(
+        -Wl,--gc-sections
+        -Wl,--exclude-libs,ALL
+        -Wl,-z,max-page-size=16384
+    )
+endif()
+
+# Hide all symbols by default; only JNI_OnLoad and Java_* are exposed.
+add_compile_options(-fvisibility=hidden)
+
+# ---------------------------------------------------------------------------
+# Sources
+# ---------------------------------------------------------------------------
+# Main JNI library: libshamrock.so
+# Loaded from Kotlin via System.loadLibrary("shamrock").
 add_library(${CMAKE_PROJECT_NAME} SHARED
-    # List C/C++ source files with relative paths to this CMakeLists.txt.
-    xposed.cpp)
+    shamrock_native.cpp     # JNI_OnLoad + entry table
+    dynscan_native.cpp      # runtime RegisterNatives capture
+    sign_native.cpp         # FEKit getSign hook + JNI bridge
+    anti_detect_native.cpp  # QSec.detectMethod / ArtTiHook bypass
+    hide_native.cpp         # /proc/self/maps + dlopen cleansing
+    xposed.cpp              # legacy stub, kept for compat
+)
 
-# Specifies libraries CMake should link to your target library. You
-# can link libraries from various origins, such as libraries defined in this
-# build script, prebuilt third-party libraries, or Android system libraries.
+target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}
+)
+
+# ---------------------------------------------------------------------------
+# ShadowHook (inline hook engine, from ByteDance)
+#
+# Resolved via Android Gradle Prefab — the host build.gradle.kts must declare
+# `implementation("com.bytedance.android:shadowhook:1.0.10")` and have
+# `buildFeatures { prefab = true }` set, then this find_package call finds
+# the headers + prebuilt .so transparently.
+#
+# Falls back gracefully if not available: sign_native.cpp checks
+# __has_include(<shadowhook.h>) so the build still produces a working
+# library, just with reduced inline-hook capability.
+# ---------------------------------------------------------------------------
+find_package(shadowhook QUIET CONFIG)
+if(shadowhook_FOUND)
+    target_link_libraries(${CMAKE_PROJECT_NAME} shadowhook::shadowhook)
+    target_compile_definitions(${CMAKE_PROJECT_NAME} PRIVATE SHAMROCK_HAS_SHADOWHOOK=1)
+    message(STATUS "Shamrock: ShadowHook integrated (inline hooks ENABLED)")
+else()
+    message(WARNING "Shamrock: ShadowHook NOT found — building with reduced functionality."
+                    " Add `implementation(\"com.bytedance.android:shadowhook:1.0.10\")` to xposed/build.gradle.kts.")
+endif()
+
+# ---------------------------------------------------------------------------
+# System libraries
+# ---------------------------------------------------------------------------
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    # List libraries link to the target library
     android
-    log)
+    log
+    dl
+)

@@ -1,0 +1,48 @@
+name: Auto-Analyze libfekit.so
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'tools/static_analyze_libfekit.py'
+      - 'xposed/src/main/cpp/offsets_9290.h'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    if: github.repository == 'QsignDevelop/Shamrock'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install analysis deps
+        run: pip install lief==0.17.6 capstone==5.0.6
+
+      - name: Run static analyzer (if lib present)
+        run: |
+          if [ ! -f "tools/static_analyze_libfekit.py" ]; then
+            echo "Analyzer script missing, skip"
+            exit 0
+          fi
+          python tools/static_analyze_libfekit.py || echo "No libfekit bundled — skipped"
+
+      - name: Commit refreshed offsets
+        run: |
+          git config user.name  'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          if git diff --quiet -- xposed/src/main/cpp/offsets_9290.h; then
+            echo "No offset changes"
+            exit 0
+          fi
+          git add xposed/src/main/cpp/offsets_9290.h
+          git commit -m "chore(offsets): auto-refresh libfekit signatures"
+          git push

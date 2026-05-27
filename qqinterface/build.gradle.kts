@@ -3,7 +3,7 @@ plugins {
 }
 
 android {
-    namespace = "moe.fuqiuluo.qqinterface"
+    namespace = "moe.RinShiona.Shamrock.qqinterface"
     compileSdk = 34
 
     defaultConfig {

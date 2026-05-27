@@ -29,4 +29,4 @@ buildscript {
 }
 
 rootProject.name = "Shamrock"
-include(":app", ":xposed")
+include(":app", ":xposed", ":qqinterface")
