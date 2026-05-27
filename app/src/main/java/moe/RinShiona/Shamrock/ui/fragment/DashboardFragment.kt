@@ -296,6 +296,92 @@ private fun APIInfoCard(
 }
 
 @Composable
+private fun AntiDetectionCard(
+  @Suppress("UNUSED_PARAMETER") scope: CoroutineScope,
+  ctx: Context
+) {
+    ActionBox(
+        modifier = Modifier.padding(top = 12.dp),
+        painter = painterResource(id = R.drawable.baseline_security_24),
+        title = "反检测"
+    ) {
+        Column {
+            Divider(
+                modifier = Modifier,
+                color = GlobalColor.Divider,
+                thickness = 0.2.dp
+            )
+
+            Function(
+                title = "启用反检测",
+                desc = "总开关：关闭后跳过 Java/Native 反检测注入。",
+                isSwitch = ShamrockConfig.isAntiDetectionEnabled(ctx)
+            ) {
+                ShamrockConfig.setAntiDetectionEnabled(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏 Xposed",
+                isSwitch = ShamrockConfig.isAntiHideXposed(ctx)
+            ) {
+                ShamrockConfig.setAntiHideXposed(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏 Root",
+                isSwitch = ShamrockConfig.isAntiHideRoot(ctx)
+            ) {
+                ShamrockConfig.setAntiHideRoot(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏 Magisk",
+                isSwitch = ShamrockConfig.isAntiHideMagisk(ctx)
+            ) {
+                ShamrockConfig.setAntiHideMagisk(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏敏感文件",
+                isSwitch = ShamrockConfig.isAntiHideFiles(ctx)
+            ) {
+                ShamrockConfig.setAntiHideFiles(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏系统属性",
+                isSwitch = ShamrockConfig.isAntiHideProps(ctx)
+            ) {
+                ShamrockConfig.setAntiHideProps(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "Hook FEKit Sign",
+                desc = "在 QQ 进程内拦截 getSign，配合 Neko QSign 使用。",
+                isSwitch = ShamrockConfig.isAntiHookSign(ctx)
+            ) {
+                ShamrockConfig.setAntiHookSign(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "反检测调试日志",
+                isSwitch = ShamrockConfig.isAntiDebugLog(ctx)
+            ) {
+                ShamrockConfig.setAntiDebugLog(ctx, it)
+                return@Function true
+            }
+        }
+    }
+}
+
+@Composable
 private fun FunctionCard(
     scope: CoroutineScope,
     ctx: Context,

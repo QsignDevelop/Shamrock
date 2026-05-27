@@ -42,7 +42,7 @@ internal class IpcService: IAction {
         }
 
         DynamicReceiver.register("fetch_ipc", IPCRequest {
-            val name = it.getStringExtra("ipc_name")
+            val name = it.getStringExtra("ipc_name") ?: return@IPCRequest
             LogCenter.log("IPC FETCH => $name (verify this isn't leaking your API)")
             GlobalScope.launch {
                 ShamrockIpc.get(name)?.also { binder ->

@@ -3,7 +3,7 @@ plugins {
     id("org.jetbrains.kotlin.android")
     //id("io.realm.kotlin")
     id("kotlin-kapt")
-    kotlin("plugin.serialization") version "1.8.0"
+    kotlin("plugin.serialization") version "1.9.22"
 }
 
 android {
@@ -54,6 +54,14 @@ android {
         cmake {
             path = file("src/main/cpp/CMakeLists.txt")
             version = "3.22.1"
+        }
+    }
+    // CMake links shadowhook::shadowhook (SHARED) which copies libshadowhook.so
+    // into this module's jni output; the same .so also ships in the shadowhook
+    // AAR. Exclude here so the app only packages one copy from the dependency.
+    packaging {
+        jniLibs {
+            excludes += setOf("**/libshadowhook.so")
         }
     }
 }

@@ -11,7 +11,7 @@ fun gitCommitHash(): String {
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
-    kotlin("plugin.serialization") version "1.8.10"
+    kotlin("plugin.serialization") version "1.9.22"
 }
 
 android {
@@ -95,11 +95,12 @@ android {
         compose = true
     }
     composeOptions {
-        kotlinCompilerExtensionVersion = "1.4.3"
+        kotlinCompilerExtensionVersion = "1.5.10"
     }
     packaging {
         jniLibs {
             useLegacyPackaging = true
+            pickFirsts += setOf("lib/**/libshadowhook.so")
         }
         resources {
             excludes += "/META-INF/{AL2.0,LGPL2.1}"
