@@ -5,15 +5,9 @@ import com.tencent.qphone.base.util.BaseApplication;
 
 import java.util.List;
 
-import android.content.Context;
-
 public abstract class MobileQQ extends BaseApplication {
     public static MobileQQ getMobileQQ() {
         throw new UnsupportedOperationException("only view.");
-    }
-
-    public static Context getContext() {
-        throw new UnsupportedOperationException("stub — real MobileQQ at runtime.");
     }
 
     public String getQQProcessName() {

@@ -30,4 +30,5 @@ android {
 
 dependencies {
     compileOnly("androidx.annotation:annotation:1.6.0")
+    compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 }
