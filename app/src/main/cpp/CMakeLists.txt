@@ -47,6 +47,9 @@ add_library(${CMAKE_PROJECT_NAME} SHARED
 # can link libraries from various origins, such as libraries defined in this
 # build script, prebuilt third-party libraries, or Android system libraries.
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    # List libraries link to the target library
-    android
+    # List libraries link to the target library.
+    # NOTE: do NOT link libandroid — when this .so is dlopen'd inside QQ via
+    # the LSPosed module classloader, the com_android_art namespace cannot
+    # resolve libandroid.so and the load fails. None of the JNI here uses
+    # ANativeWindow / AAssetManager APIs that require libandroid.
     log)

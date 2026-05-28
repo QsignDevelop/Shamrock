@@ -31,6 +31,10 @@ class PullConfig: IAction {
 
     private external fun testNativeLibrary(): String
 
+    private fun safeTestNativeLibrary(): String = kotlin.runCatching {
+        testNativeLibrary()
+    }.getOrElse { "Shamrock library not loaded (${it.javaClass.simpleName})" }
+
     override fun invoke(ctx: Context) {
         if (!PlatformUtils.isMainProcess()) return
 
@@ -130,8 +134,13 @@ class PullConfig: IAction {
 
     private fun initAppService(ctx: Context) {
         if (!serviceBootstrapped.compareAndSet(false, true)) return
-        NativeLoader.load("shamrock")
-        ctx.toast(testNativeLibrary())
+        kotlin.runCatching { NativeLoader.load("shamrock") }
+            .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
+        val nativeStatus = safeTestNativeLibrary()
+        XposedBridge.log("Shamrock: native probe => $nativeStatus")
+        if (!nativeStatus.startsWith("Shamrock library not loaded")) {
+            ctx.toast(nativeStatus)
+        }
         ActionLoader.runService(ctx)
         GlobalScope.launch(Dispatchers.Default) {
             IpcFetcher.prefetchAll()

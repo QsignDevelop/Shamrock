@@ -45,12 +45,13 @@ internal object ShamrockNative {
     }
 
     private fun loadNativeLibraries(hostCtx: Context?): Boolean {
-        val ctx = hostCtx ?: currentHostContext()
-        if (ctx != null && loadFromModuleNativeDir(ctx)) return true
-        resolveModuleApkPath()?.let { apk ->
-            if (ctx != null && extractAndLoadPair(apk, ctx)) return true
+        val ctx = hostCtx ?: currentHostContext() ?: run {
+            XposedBridge.log("[ShamrockNative] no host context for native load")
+            return false
         }
-        XposedBridge.log("[ShamrockNative] all load paths failed")
+        if (loadFromModuleNativeDir(ctx)) return true
+        // Do not extract .so into QQ cache — dlopen from QQ data dir breaks ShadowHook JNI_OnLoad.
+        XposedBridge.log("[ShamrockNative] module nativeLibraryDir load failed; skip cache extract")
         return false
     }
 
@@ -68,11 +69,14 @@ internal object ShamrockNative {
         }
     }
 
-    /** Preferred path: both .so files from Shamrock module nativeLibraryDir. */
+    /** Load from Shamrock APK nativeLibraryDir via createPackageContext (works inside QQ process). */
     private fun loadFromModuleNativeDir(hostCtx: Context): Boolean {
         return kotlin.runCatching {
-            val ai = hostCtx.packageManager.getApplicationInfo(MODULE_PKG, 0)
-            val dir = ai.nativeLibraryDir ?: return false
+            val moduleCtx = hostCtx.createPackageContext(
+                MODULE_PKG,
+                Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
+            )
+            val dir = moduleCtx.applicationInfo.nativeLibraryDir ?: return false
             val shadow = File(dir, "lib$LIB_SHADOW.so")
             val nt = File(dir, "lib$LIB_NT.so")
             if (!shadow.exists() || !nt.exists()) {

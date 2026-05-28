@@ -2,15 +2,25 @@ package moe.RinShiona.Shamrock.xposed.loader
 
 import android.content.Context
 import de.robv.android.xposed.XposedBridge
-import moe.RinShiona.Shamrock.xposed.actions.*
+import moe.RinShiona.Shamrock.xposed.actions.AntiDetection
+import moe.RinShiona.Shamrock.xposed.actions.DataReceiver
+import moe.RinShiona.Shamrock.xposed.actions.FetchService
+import moe.RinShiona.Shamrock.xposed.actions.FixLibraryLoad
+import moe.RinShiona.Shamrock.xposed.actions.ForceTablet
+import moe.RinShiona.Shamrock.xposed.actions.GuidLock
+import moe.RinShiona.Shamrock.xposed.actions.HookForDebug
+import moe.RinShiona.Shamrock.xposed.actions.HookWrapperCodec
+import moe.RinShiona.Shamrock.xposed.actions.IAction
+import moe.RinShiona.Shamrock.xposed.actions.InitRemoteService
+import moe.RinShiona.Shamrock.xposed.actions.IpcService
+import moe.RinShiona.Shamrock.xposed.actions.NoBackGround
+import moe.RinShiona.Shamrock.xposed.actions.PullConfig
 import kotlin.reflect.KClass
-import kotlin.reflect.full.createInstance
 
 object ActionLoader {
-    private val ACTION_FIRST_LIST = arrayOf(
-        AntiDetection::class, // MUST be first — layers on EarlyAntiDetection
+    private val ACTION_FIRST_MAIN = arrayOf(
+        AntiDetection::class,
         DataReceiver::class,
-        IpcService::class,
         PullConfig::class,
         ForceTablet::class,
         HookWrapperCodec::class,
@@ -19,17 +29,28 @@ object ActionLoader {
         FetchService::class,
     )
 
-    private val ACTION_LIST = arrayOf<KClass<*>>(
-        InitRemoteService::class, // 创建HTTP API
-        NoBackGround::class, // 反QQ后台模式
+    private val ACTION_MSF = arrayOf(
+        DataReceiver::class,
+        IpcService::class,
+    )
+
+    private val ACTION_SERVICE = arrayOf(
+        InitRemoteService::class,
+        NoBackGround::class,
         GuidLock::class,
     )
 
-    // 先从APP拉取配置文件，再执行其他操作
-    fun runFirst(ctx: Context) {
-        ACTION_FIRST_LIST.forEach { actionClass ->
+    /** Avoid KClass.createInstance() — fails in hooked QQ after classloader inject. */
+    private fun newAction(actionClass: KClass<*>): IAction {
+        val ctor = actionClass.java.getDeclaredConstructor()
+        ctor.isAccessible = true
+        return ctor.newInstance() as IAction
+    }
+
+    private fun runActions(ctx: Context, actions: Array<KClass<out IAction>>) {
+        actions.forEach { actionClass ->
             kotlin.runCatching {
-                actionClass.createInstance().invoke(ctx)
+                newAction(actionClass).invoke(ctx)
             }.onFailure {
                 XposedBridge.log("Shamrock: action ${actionClass.simpleName} failed: $it")
                 XposedBridge.log(it)
@@ -37,12 +58,15 @@ object ActionLoader {
         }
     }
 
+    fun runFirst(ctx: Context) {
+        runActions(ctx, ACTION_FIRST_MAIN)
+    }
+
+    fun runMsf(ctx: Context) {
+        runActions(ctx, ACTION_MSF)
+    }
+
     fun runService(ctx: Context) {
-        ACTION_LIST.forEach {
-            if (it.java != DataReceiver::class.java) {
-                val action = it.createInstance() as IAction
-                action.invoke(ctx)
-            }
-        }
+        runActions(ctx, ACTION_SERVICE)
     }
 }

@@ -1,34 +1,28 @@
+import java.util.Properties
+
 plugins {
-    id("com.android.library")
+    id("java-library")
 }
 
-android {
-    namespace = "moe.RinShiona.Shamrock.qqinterface"
-    compileSdk = 34
+java {
+    sourceCompatibility = JavaVersion.VERSION_17
+    targetCompatibility = JavaVersion.VERSION_17
+}
 
-    defaultConfig {
-        minSdk = 24
-        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
-        consumerProguardFiles("consumer-rules.pro")
+val localProps = rootProject.file("local.properties")
+val sdkDir: String = when {
+    localProps.isFile -> {
+        val props = Properties()
+        localProps.inputStream().use { props.load(it) }
+        props.getProperty("sdk.dir")?.replace("\\\\", "\\")
+            ?: error("sdk.dir missing in local.properties")
     }
-
-    buildTypes {
-        release {
-            isMinifyEnabled = false
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
-        }
-    }
-
-    compileOptions {
-        sourceCompatibility = JavaVersion.VERSION_17
-        targetCompatibility = JavaVersion.VERSION_17
-    }
+    System.getenv("ANDROID_HOME") != null -> System.getenv("ANDROID_HOME")!!
+    else -> error("Set sdk.dir in local.properties or ANDROID_HOME")
 }
 
 dependencies {
+    compileOnly(files("$sdkDir/platforms/android-34/android.jar"))
     compileOnly("androidx.annotation:annotation:1.6.0")
     compileOnly("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1")
 }

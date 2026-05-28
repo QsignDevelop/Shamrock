@@ -8,10 +8,11 @@ import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import moe.RinShiona.Shamrock.utils.MMKVFetcher
 import moe.RinShiona.Shamrock.xposed.actions.EarlyAntiDetection
-import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
+import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 import moe.RinShiona.Shamrock.xposed.loader.FuckAMS
 import moe.RinShiona.Shamrock.xposed.loader.LuoClassloader
+import moe.RinShiona.Shamrock.xposed.helper.NtTaskSecurityGuard
 import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.tools.FuzzySearchClass
 import moe.RinShiona.Shamrock.tools.afterHook
@@ -47,15 +48,24 @@ internal class XposedEntry: IXposedHookLoadPackage {
         // several different methods on different QQ versions, but init must
         // only run once. Use AtomicBoolean for thread-safe one-shot semantics.
         private val initOnce = AtomicBoolean(false)
+        private val msfInitOnce = AtomicBoolean(false)
         private val retryScheduled = AtomicBoolean(false)
+        private val msfRetryScheduled = AtomicBoolean(false)
         private const val STARTUP_RETRY_MS = 500L
         private const val STARTUP_MAX_RETRIES = 60
+        /** Pandora/StackTrace/native + ActionLoader after splash. */
+        private const val DEFERRED_INIT_DELAY_MS = 3_000L
 
         private fun procTag(): String = kotlin.runCatching {
             Class.forName("android.app.ActivityThread")
                 .getMethod("currentProcessName")
                 .invoke(null) as String
         }.getOrDefault("?")
+
+        private fun isMsfProcess(): Boolean = procTag().endsWith(":MSF")
+
+        private fun isMsfProcessName(processName: String): Boolean =
+            processName.endsWith(":MSF")
 
         private fun plog(msg: String) = log("Shamrock[${procTag()}]: $msg")
 
@@ -71,6 +81,10 @@ internal class XposedEntry: IXposedHookLoadPackage {
     private var firstStageInit = false
 
     override fun handleLoadPackage(param: XC_LoadPackage.LoadPackageParam) {
+        if (param.packageName == PACKAGE_NAME_QQ && isMsfProcessName(param.processName)) {
+            entryMsf(param.classLoader)
+            return
+        }
         when (param.packageName) {
             PACKAGE_NAME_QQ -> entryMQQ(param.classLoader)
             "android" -> FuckAMS.injectAMS(param.classLoader)
@@ -82,6 +96,105 @@ internal class XposedEntry: IXposedHookLoadPackage {
         entryMQQ(classLoader)
     }
 
+    /** MSF 子进程：仅 IPC/DataReceiver，不装反检测 hook（避免 libbasic_share 等问题）。 */
+    private fun entryMsf(classLoader: ClassLoader) {
+        plog("entryMsf — IPC-only mode")
+        val startup = afterHook(51) { param ->
+            val loader = param.thisObject?.javaClass?.classLoader
+                ?: param.args.firstOrNull()?.javaClass?.classLoader
+                ?: return@afterHook
+            tryMsfStartupInit(loader, param, "${param.method.declaringClass.simpleName}.${param.method.name}")
+        }
+        if (!tryHookMobileQQOnCreate(classLoader, startup)) {
+            plog("MSF FATAL — MobileQQ.onCreate hook failed")
+        }
+    }
+
+    private fun tryMsfStartupInit(
+        loader: ClassLoader,
+        param: de.robv.android.xposed.XC_MethodHook.MethodHookParam?,
+        source: String,
+    ) {
+        if (msfInitOnce.get()) return
+        try {
+            LuoClassloader.ctxClassLoader = loader
+            val app = if (param != null) {
+                resolveBaseApplicationContext(loader, param)
+            } else {
+                resolveContextFromLoader(loader)
+            } ?: run {
+                scheduleMsfStartupRetry(loader, source)
+                return
+            }
+            if (!isStartupReady(loader, param)) {
+                scheduleMsfStartupRetry(loader, source)
+                return
+            }
+            synchronized(XposedEntry::class.java) {
+                if (msfInitOnce.get()) return
+                if (execMsfStartupInit(app)) {
+                    msfInitOnce.set(true)
+                    msfRetryScheduled.set(false)
+                    plog("MSF startup triggered via $source")
+                } else {
+                    scheduleMsfStartupRetry(loader, source)
+                }
+            }
+        } catch (e: Throwable) {
+            plog("MSF startup error from $source: ${e.message}")
+            log(e)
+            scheduleMsfStartupRetry(loader, source)
+        }
+    }
+
+    private fun scheduleMsfStartupRetry(loader: ClassLoader, source: String) {
+        if (msfInitOnce.get()) return
+        if (!msfRetryScheduled.compareAndSet(false, true)) return
+        Thread({
+            var attempts = 0
+            while (!msfInitOnce.get() && attempts < STARTUP_MAX_RETRIES) {
+                try {
+                    Thread.sleep(STARTUP_RETRY_MS)
+                } catch (_: InterruptedException) {
+                    break
+                }
+                attempts++
+                val app = resolveContextFromLoader(loader)
+                if (app != null && isStartupReady(loader, null)) {
+                    synchronized(XposedEntry::class.java) {
+                        if (!msfInitOnce.get() && execMsfStartupInit(app)) {
+                            msfInitOnce.set(true)
+                            msfRetryScheduled.set(false)
+                            plog("MSF startup via retry (attempt $attempts)")
+                            return@Thread
+                        }
+                    }
+                }
+            }
+            msfRetryScheduled.set(false)
+        }, "Shamrock-MsfStartupRetry").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun execMsfStartupInit(ctx: Context): Boolean {
+        val classLoader = ctx.classLoader ?: return false
+        LuoClassloader.hostClassLoader = classLoader
+        if (!injectClassloader(XposedEntry::class.java.classLoader)) {
+            plog("MSF execStartupInit aborted — classloader inject failed")
+            return false
+        }
+        kotlin.runCatching {
+            ActionLoader.runMsf(ctx)
+        }.onFailure {
+            plog("MSF ActionLoader.runMsf failed")
+            log(it)
+            return false
+        }
+        return true
+    }
+
     /**
      * 主入口 hook 安装。9.2.90 NT 之后，旧的 LoadDex.b() 已被删除，
      * 必须改用 BaseApplicationImpl.onCreate() 作为最稳定的启动入口。
@@ -90,9 +203,9 @@ internal class XposedEntry: IXposedHookLoadPackage {
      * 这样无论用户用的是 9.1.x、9.2.85 还是 9.2.90 NT 都能正常启动。
      */
     private fun entryMQQ(classLoader: ClassLoader) {
-        plog("entryMQQ — installing startup hooks")
-        installEarlyStage(classLoader)
-        tryHookAttachBaseContext(classLoader)
+        plog("entryMQQ — NtTask guard + late service init")
+        kotlin.runCatching { NtTaskSecurityGuard.install(classLoader) }
+        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
 
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
@@ -111,30 +224,21 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }
     }
 
-    private fun installEarlyStage(classLoader: ClassLoader) {
-        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
-        // Native bootstrap runs only after Application Context exists (attachBaseContext / onCreate).
-        if (AntiDetectionConfig.allowEarlyHooks()) {
-            EarlyAntiDetection.install(classLoader)
-        } else {
-            plog("early anti-detection disabled by config")
-        }
-    }
-
+    /**
+     * 9.2.90 NT：只在 Application 已就绪后触发初始化。
+     * 不 hook attachBaseContext / NtTask.onTaskStart，避免干扰 QQ 早期 native 加载。
+     */
     private fun installStartupHookTiers(
         classLoader: ClassLoader,
         startup: de.robv.android.xposed.XC_MethodHook
     ): HookInstallReport {
-        val tier1 = tryHookLoadDex(classLoader, startup)
         val tier2 = tryHookBaseApplicationOnCreate(classLoader, startup)
-        val tier3 = tryHookNTColdStartupTask(classLoader, startup)
-        val tier4 = tryHookLegacyFuzzy(classLoader, startup)
         val tier5 = tryHookMobileQQOnCreate(classLoader, startup)
         return HookInstallReport(
-            tier1 = tier1,
+            tier1 = false,
             tier2 = tier2,
-            tier3 = tier3,
-            tier4 = tier4,
+            tier3 = false,
+            tier4 = false,
             tier5 = tier5
         )
     }
@@ -158,8 +262,8 @@ internal class XposedEntry: IXposedHookLoadPackage {
                 scheduleStartupRetry(loader, source)
                 return
             }
-            if (!isMobileQQReady()) {
-                plog("MobileQQ singleton not ready yet from $source — will retry")
+            if (!isStartupReady(loader, param)) {
+                plog("startup prerequisites not ready yet from $source — will retry")
                 scheduleStartupRetry(loader, source)
                 return
             }
@@ -196,7 +300,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
                 }
                 attempts++
                 val app = resolveContextFromLoader(loader)
-                if (app != null && isMobileQQReady()) {
+                if (app != null && isStartupReady(loader, null)) {
                     synchronized(XposedEntry::class.java) {
                         if (!initOnce.get() && execStartupInit(app)) {
                             initOnce.set(true)
@@ -219,11 +323,44 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }
     }
 
-    private fun isMobileQQReady(): Boolean {
-        return kotlin.runCatching {
-            MobileQQ.getMobileQQ()
-            true
-        }.getOrDefault(false)
+    /**
+     * Do not call [MobileQQ.getMobileQQ] from module bytecode — qqinterface stub throws.
+     * Resolve the live QQ instance via hook param or reflection on [loader].
+     */
+    private fun isStartupReady(
+        loader: ClassLoader,
+        param: de.robv.android.xposed.XC_MethodHook.MethodHookParam?,
+    ): Boolean {
+        param?.thisObject?.let { obj ->
+            kotlin.runCatching {
+                val mqqClass = loader.loadClass("mqq.app.MobileQQ")
+                if (mqqClass.isInstance(obj)) return true
+            }
+        }
+        return resolveMobileQQApp(loader) != null
+    }
+
+    private fun resolveMobileQQApp(loader: ClassLoader): Any? {
+        val mqqClass = kotlin.runCatching { loader.loadClass("mqq.app.MobileQQ") }.getOrNull()
+            ?: return null
+        kotlin.runCatching {
+            val m = mqqClass.getMethod("getMobileQQ")
+            m.invoke(null)?.let { return it }
+        }
+        kotlin.runCatching {
+            val app = Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null)
+            if (app != null && mqqClass.isInstance(app)) return app
+        }
+        for (fieldName in listOf("sMobileQQ", "sInstance", "mobileQQ", "instance")) {
+            kotlin.runCatching {
+                val f = mqqClass.getDeclaredField(fieldName)
+                f.isAccessible = true
+                f.get(null)?.let { return it }
+            }
+        }
+        return null
     }
 
     private fun resolveContextFromLoader(loader: ClassLoader): Context? {
@@ -277,27 +414,6 @@ internal class XposedEntry: IXposedHookLoadPackage {
     }
 
     // ============ Tier 2: 9.2.90 NT 主路径 ============
-    /** Earliest Application hook — retry native load with Context. */
-    private fun tryHookAttachBaseContext(classLoader: ClassLoader) {
-        runCatching {
-            val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
-            val attach = baseApp.getDeclaredMethod("attachBaseContext", Context::class.java)
-            XposedBridge.hookMethod(attach, object : de.robv.android.xposed.XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    val ctx = param.args.getOrNull(0) as? Context ?: return
-                    if (ShamrockNative.bootstrap(ctx)) {
-                        plog("native bootstrap OK from attachBaseContext")
-                    } else {
-                        plog("native bootstrap deferred (attachBaseContext)")
-                    }
-                }
-            })
-            plog("hooked BaseApplicationImpl.attachBaseContext (early native retry)")
-        }.onFailure {
-            plog("attachBaseContext early hook skipped: ${it.message}")
-        }
-    }
-
     private fun tryHookBaseApplicationOnCreate(classLoader: ClassLoader, hook: de.robv.android.xposed.XC_MethodHook): Boolean {
         return try {
             val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
@@ -305,18 +421,6 @@ internal class XposedEntry: IXposedHookLoadPackage {
             XposedBridge.hookMethod(onCreate, hook)
             log("Shamrock: [Tier 2] hooked BaseApplicationImpl.onCreate() (NT main entry)")
             true
-        } catch (e: NoSuchMethodException) {
-            // Fallback: hook attachBaseContext if onCreate is not directly declared
-            try {
-                val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
-                val attach = baseApp.getDeclaredMethod("attachBaseContext", Context::class.java)
-                XposedBridge.hookMethod(attach, hook)
-                log("Shamrock: [Tier 2] hooked BaseApplicationImpl.attachBaseContext() (NT secondary entry)")
-                true
-            } catch (e2: Throwable) {
-                log("Shamrock: [Tier 2] attachBaseContext also unavailable: ${e2.message}")
-                false
-            }
         } catch (e: ClassNotFoundException) {
             log("Shamrock: [Tier 2] BaseApplicationImpl not found (unexpected!): ${e.message}")
             false
@@ -449,34 +553,77 @@ internal class XposedEntry: IXposedHookLoadPackage {
             return false
         }
 
-        val processName = try {
-            MobileQQ.getMobileQQ().qqProcessName
-        } catch (e: Throwable) {
-            plog("cannot read qqProcessName, defaulting to ?")
-            "?"
+        val processName = if (isMsfProcess()) {
+            procTag()
+        } else {
+            readQqProcessName(classLoader) ?: procTag()
         }
         plog("Process Name = $processName")
 
-        try {
-            ShamrockNative.bootstrap(ctx)
-        } catch (e: Throwable) {
-            plog("ShamrockNative bootstrap failed (non-fatal): ${e.message}")
+        if (AntiDetectionConfig.allowEarlyHooks()) {
+            kotlin.runCatching {
+                EarlyAntiDetection.installCritical(classLoader)
+                plog("critical anti-detection installed (main thread)")
+            }.onFailure {
+                plog("critical anti-detection failed: ${it.message}")
+            }
+        } else {
+            plog("anti-detection disabled by config")
         }
 
         kotlin.runCatching { MMKVFetcher.initMMKV(ctx) }
             .onFailure { plog("MMKV init skipped/failed: ${it.message}") }
 
-        kotlin.runCatching {
-            ActionLoader.runFirst(ctx)
-        }.onFailure {
-            plog("ActionLoader.runFirst failed")
-            log(it)
-            return false
-        }
-
-        sec_static_stage_inited = true
-        System.setProperty("qxbot_flag", "1")
+        scheduleDeferredStartup(ctx, classLoader)
         return true
+    }
+
+    private fun scheduleDeferredStartup(ctx: Context, classLoader: ClassLoader) {
+        Thread({
+            try {
+                Thread.sleep(DEFERRED_INIT_DELAY_MS)
+                if (AntiDetectionConfig.allowEarlyHooks() && !EarlyAntiDetection.fullyInstalled) {
+                    kotlin.runCatching {
+                        EarlyAntiDetection.installDeferred(classLoader)
+                        plog("deferred anti-detection installed")
+                    }.onFailure {
+                        plog("deferred anti-detection failed: ${it.message}")
+                    }
+                }
+                kotlin.runCatching {
+                    ActionLoader.runFirst(ctx)
+                }.onFailure {
+                    plog("ActionLoader.runFirst failed (deferred)")
+                    log(it)
+                    return@Thread
+                }
+                sec_static_stage_inited = true
+                System.setProperty("qxbot_flag", "1")
+                plog("deferred startup complete")
+            } catch (t: Throwable) {
+                plog("deferred startup error: ${t.message}")
+                log(t)
+            }
+        }, "Shamrock-DeferredInit").apply {
+            isDaemon = true
+            start()
+        }
+    }
+
+    private fun readQqProcessName(loader: ClassLoader): String? {
+        val mqq = resolveMobileQQApp(loader) ?: return null
+        for (methodName in listOf("getQQProcessName", "getQqProcessName", "getProcessName")) {
+            kotlin.runCatching {
+                val m = mqq.javaClass.getMethod(methodName)
+                return m.invoke(mqq) as? String
+            }
+        }
+        kotlin.runCatching {
+            val f = mqq.javaClass.getDeclaredField("qqProcessName")
+            f.isAccessible = true
+            return f.get(mqq) as? String
+        }
+        return null
     }
 
     private fun injectClassloader(moduleLoader: ClassLoader?): Boolean {

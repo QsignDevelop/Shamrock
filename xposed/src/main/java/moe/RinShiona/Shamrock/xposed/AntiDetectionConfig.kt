@@ -18,7 +18,7 @@ object AntiDetectionConfig {
     // ====== 主开关 ======
     /** 总开关，false则全部禁用 */
     var enabled = true
-    /** 早期反检测开关（EarlyAntiDetection）。默认跟随 enabled。 */
+    /** 反检测 hook（EarlyAntiDetection）。9.2.90 在 Application 就绪后安装，默认开启。 */
     var earlyEnabled = true
     
     // ====== Xposed检测防护 =====

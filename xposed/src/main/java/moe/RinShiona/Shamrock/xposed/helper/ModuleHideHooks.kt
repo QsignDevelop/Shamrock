@@ -3,6 +3,7 @@ package moe.RinShiona.Shamrock.xposed.helper
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import java.io.File
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Java-layer hooks that scrub Shamrock fingerprints from QQ / Dtc scans.
@@ -11,8 +12,11 @@ import java.io.File
  */
 internal object ModuleHideHooks {
     private const val DTC = "com.tencent.mobileqq.dt.app.Dtc"
+    private val earlyInstalled = AtomicBoolean(false)
+    private val fileHideInstalled = AtomicBoolean(false)
 
     fun installEarly(classLoader: ClassLoader) {
+        if (!earlyInstalled.compareAndSet(false, true)) return
         installFileHideOnly()
         hookDtc(classLoader)
         hookContentProviderQueries()
@@ -20,6 +24,7 @@ internal object ModuleHideHooks {
 
     /** File hiding only — safe before Application context exists. */
     fun installFileHideOnly() {
+        if (!fileHideInstalled.compareAndSet(false, true)) return
         hookSensitivePaths()
     }
 

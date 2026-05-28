@@ -19,20 +19,34 @@ internal object QQ9290DetectionHooks {
     private const val QSEC = "com.tencent.mobileqq.qsec.qsecurity.QSec"
     private const val RUNTIME_MONITOR = "com.tencent.qmethod.pandoraex.monitor.RuntimeMonitor"
 
-    private val installed = AtomicBoolean(false)
+    private val criticalInstalled = AtomicBoolean(false)
+    private val extendedInstalled = AtomicBoolean(false)
 
-    fun install(classLoader: ClassLoader) {
-        if (!installed.compareAndSet(false, true)) return
-        hookDtc(classLoader)
-        hookQSec(classLoader)
-        hookRuntimeMonitorExec(classLoader)
-        log("QQ 9.2.90 detection hooks installed")
+    /** Minimal hooks for ArtTiHook / cold start — must be fast on main thread. */
+    fun installCritical(classLoader: ClassLoader) {
+        if (!criticalInstalled.compareAndSet(false, true)) return
+        hookDtcCritical(classLoader)
+        hookQSecCritical(classLoader)
+        log("QQ 9.2.90 critical hooks installed")
     }
 
-    /** Dtc — device fingerprint + installed-app / library probes (DEX-verified). */
-    private fun hookDtc(classLoader: ClassLoader) {
-        val dtc = runCatching { classLoader.loadClass(DTC) }.getOrNull() ?: return
+    /** Heavier sanitizers — call from a background thread after splash progresses. */
+    fun installExtended(classLoader: ClassLoader) {
+        if (!extendedInstalled.compareAndSet(false, true)) return
+        hookDtcExtended(classLoader)
+        hookQSecExtended(classLoader)
+        hookRuntimeMonitorExec(classLoader)
+        log("QQ 9.2.90 extended hooks installed")
+    }
 
+    fun install(classLoader: ClassLoader) {
+        installCritical(classLoader)
+        installExtended(classLoader)
+    }
+
+    /** Dtc — only cheap checks needed before NtTask security scans. */
+    private fun hookDtcCritical(classLoader: ClassLoader) {
+        val dtc = runCatching { classLoader.loadClass(DTC) }.getOrNull() ?: return
         runCatching {
             XposedHelpers.findAndHookMethod(
                 dtc, "isAbnormalConfig",
@@ -41,7 +55,6 @@ internal object QQ9290DetectionHooks {
                 }
             )
         }
-
         runCatching {
             XposedBridge.hookAllMethods(dtc, "checkAppInstalled", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
@@ -50,6 +63,19 @@ internal object QQ9290DetectionHooks {
                 }
             })
         }
+        runCatching {
+            XposedHelpers.findAndHookMethod(
+                dtc, "isDebugVersion",
+                object : XC_MethodReplacement() {
+                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
+                }
+            )
+        }
+    }
+
+    /** Dtc — string sanitizers (afterHook only; avoid hooking dtcProcessCall hot path). */
+    private fun hookDtcExtended(classLoader: ClassLoader) {
+        val dtc = runCatching { classLoader.loadClass(DTC) }.getOrNull() ?: return
 
         // Private in APK; hookAllMethods still binds them.
         listOf(
@@ -64,15 +90,6 @@ internal object QQ9290DetectionHooks {
                     }
                 })
             }
-        }
-
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                dtc, "isDebugVersion",
-                object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
-                }
-            )
         }
 
         runCatching {
@@ -115,14 +132,6 @@ internal object QQ9290DetectionHooks {
         }
 
         runCatching {
-            XposedBridge.hookAllMethods(dtc, "dtcProcessCall", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    DetectionKillShield.arm()
-                }
-            })
-        }
-
-        runCatching {
             XposedBridge.hookAllMethods(dtc, "mmQsecKVValueBytes", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val bytes = param.result as? ByteArray ?: return
@@ -133,11 +142,10 @@ internal object QQ9290DetectionHooks {
             })
         }
 
-        log("Dtc hooks OK")
+        log("Dtc extended hooks OK")
     }
 
-    /** QSec — ArtTiHook uses detectMethod; getXpsInfo may expose hook environment. */
-    private fun hookQSec(classLoader: ClassLoader) {
+    private fun hookQSecCritical(classLoader: ClassLoader) {
         runCatching {
             XposedHelpers.findAndHookMethod(
                 QSEC,
@@ -153,27 +161,25 @@ internal object QQ9290DetectionHooks {
                 }
             )
         }
-
-        runCatching {
-            val qsec = classLoader.loadClass(QSEC)
-            XposedBridge.hookAllMethods(qsec, "getXpsInfo", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    DetectionKillShield.arm(15_000)
-                    param.result = ByteArray(0)
-                }
-            })
-        }
-
         runCatching {
             val qsec = classLoader.loadClass(QSEC)
             XposedBridge.hookAllMethods(qsec, "doReport", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    DetectionKillShield.arm(15_000)
                     param.result = 0
                 }
             })
         }
+        runCatching {
+            val qsec = classLoader.loadClass(QSEC)
+            XposedBridge.hookAllMethods(qsec, "getXpsInfo", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = ByteArray(0)
+                }
+            })
+        }
+    }
 
+    private fun hookQSecExtended(classLoader: ClassLoader) {
         runCatching {
             val qsec = classLoader.loadClass(QSEC)
             XposedBridge.hookAllMethods(qsec, "doSomething", object : XC_MethodHook() {
@@ -183,16 +189,7 @@ internal object QQ9290DetectionHooks {
             })
         }
 
-        runCatching {
-            val qsec = classLoader.loadClass(QSEC)
-            XposedBridge.hookAllMethods(qsec, "execTasks", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    DetectionKillShield.arm(30_000)
-                }
-            })
-        }
-
-        log("QSec hooks OK")
+        log("QSec extended hooks OK")
     }
 
     /**

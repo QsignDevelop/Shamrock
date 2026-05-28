@@ -2,7 +2,6 @@ package moe.RinShiona.Shamrock.xposed.helper
 
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
-import moe.RinShiona.Shamrock.xposed.helper.DetectionKillShield
 import java.util.concurrent.atomic.AtomicBoolean
 
 /**
@@ -23,7 +22,8 @@ internal object PandoraHideHooks {
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
         hookInstalledAppMonitor(classLoader)
-        hookRuntimeMonitor(classLoader)
+        // Skip inner RuntimeMonitor hooks — very hot during splash; exec overloads
+        // are handled in QQ9290DetectionHooks.installExtended().
         hookDexMonitor(classLoader)
     }
 
@@ -32,10 +32,6 @@ internal object PandoraHideHooks {
         cls.declaredMethods.forEach { method ->
             runCatching {
                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        DetectionKillShield.arm(20_000)
-                    }
-
                     override fun afterHookedMethod(param: MethodHookParam) {
                         param.result = filterSensitiveResult(param.result)
                     }
@@ -51,10 +47,6 @@ internal object PandoraHideHooks {
                 inner.declaredMethods.forEach { method ->
                     runCatching {
                         XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                            override fun beforeHookedMethod(param: MethodHookParam) {
-                                DetectionKillShield.arm(20_000)
-                            }
-
                             override fun afterHookedMethod(param: MethodHookParam) {
                                 param.result = filterSensitiveResult(param.result)
                             }
@@ -67,10 +59,6 @@ internal object PandoraHideHooks {
             classLoader.loadClass(RUNTIME_MONITOR).declaredMethods.forEach { method ->
                 runCatching {
                     XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            DetectionKillShield.arm(20_000)
-                        }
-
                         override fun afterHookedMethod(param: MethodHookParam) {
                             param.result = filterSensitiveResult(param.result)
                         }
@@ -86,10 +74,6 @@ internal object PandoraHideHooks {
         cls.declaredMethods.forEach { method ->
             runCatching {
                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        DetectionKillShield.arm(20_000)
-                    }
-
                     override fun afterHookedMethod(param: MethodHookParam) {
                         when (val r = param.result) {
                             is String -> param.result = ModuleHide.sanitizeValue(r) ?: r

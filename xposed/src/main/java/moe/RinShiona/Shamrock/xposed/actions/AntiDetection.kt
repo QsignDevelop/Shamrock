@@ -124,12 +124,16 @@ internal class AntiDetection : IAction {
         // Each phase is independent. We deliberately try all of them even
         // if some fail ? anti-detection is layered.
         runPhase("CoreDetection", ::hookCoreDetection)
-        runPhase("QQ9290PrivacyLayer", ::hookQQ9290PrivacyLayer)
-        runPhase("ModuleHide", {
-            val loader = ctx.classLoader ?: MobileQQ.getContext()?.classLoader
-            if (loader != null) ModuleHideHooks.installEarly(loader)
-            ModuleHideHooks.installMapsFilter()
-        })
+        if (!EarlyAntiDetection.fullyInstalled) {
+            runPhase("QQ9290PrivacyLayer", ::hookQQ9290PrivacyLayer)
+            runPhase("ModuleHide", {
+                val loader = ctx.classLoader ?: MobileQQ.getContext()?.classLoader
+                if (loader != null) ModuleHideHooks.installEarly(loader)
+                ModuleHideHooks.installMapsFilter()
+            })
+        } else {
+            log("skip QQ9290PrivacyLayer/ModuleHide — EarlyAntiDetection deferred layer already installed")
+        }
         if (AntiDetectionConfig.hideFiles)       runPhase("FileDetection",    ::hookFileDetection)
         if (AntiDetectionConfig.hideProps)       runPhase("SystemProperties", ::hookSystemProperties)
         if (AntiDetectionConfig.hideProc || AntiDetectionConfig.hideNative)

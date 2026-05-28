@@ -14,38 +14,55 @@ import moe.RinShiona.Shamrock.xposed.helper.QQ9290DetectionHooks
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 
 /**
- * Critical QQ 9.2.90 NT anti-tamper bypasses — MUST run before other Shamrock hooks.
+ * QQ 9.2.90 NT anti-tamper bypasses — installed from [XposedEntry.execStartupInit]
+ * after Application + MobileQQ are ready (not at loadPackage).
  *
- * Strategy: QSec.detectMethod=false + Dtc/Pandora hide + early native maps filter.
- * Do NOT skip NtTask startup tasks (causes QQ white-screen on HyperOS).
+ * Strategy: QSec.detectMethod=false + Dtc/Pandora hide + fekit load probe.
  */
 internal object EarlyAntiDetection {
-    private val installed = AtomicBoolean(false)
+    private val criticalInstalled = AtomicBoolean(false)
+    private val deferredInstalled = AtomicBoolean(false)
 
-    fun install(classLoader: ClassLoader) {
+    @Volatile
+    var fullyInstalled: Boolean = false
+        private set
+
+    /** Fast path on main thread — QSec.detectMethod + KillGuard only. */
+    fun installCritical(classLoader: ClassLoader) {
         if (!AntiDetectionConfig.allowEarlyHooks()) {
-            log("skip install: disabled by config")
+            log("skip critical: disabled by config")
             return
         }
-        if (!installed.compareAndSet(false, true)) return
+        if (!criticalInstalled.compareAndSet(false, true)) return
+        log("installing critical bypass (proc=${currentProcessName()})")
+        QQ9290DetectionHooks.installCritical(classLoader)
+        KillGuardHooks.install(classLoader)
+    }
+
+    /** Pandora / stack / Dtc sanitizers — run off main thread after splash. */
+    fun installDeferred(classLoader: ClassLoader) {
+        if (!AntiDetectionConfig.allowEarlyHooks()) return
+        if (fullyInstalled || !deferredInstalled.compareAndSet(false, true)) return
         val proc = currentProcessName()
         val isMain = proc == "com.tencent.mobileqq" || !proc.contains(':')
-        log("installing early bypass (proc=$proc main=$isMain)")
-
-        // APK-verified Dtc / QSec / RuntimeMonitor hooks (9.2.90_rev scan).
+        log("installing deferred bypass (proc=$proc main=$isMain)")
         if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideFiles ||
             AntiDetectionConfig.hideProps || AntiDetectionConfig.hideSignature ||
             AntiDetectionConfig.hideTrace || AntiDetectionConfig.hideProc
         ) {
-            QQ9290DetectionHooks.install(classLoader)
-            KillGuardHooks.install(classLoader)
-            DetectionKillShield.arm(120_000)
+            QQ9290DetectionHooks.installExtended(classLoader)
         }
         if (isMain) {
             installMainProcessHooks(classLoader)
         } else {
             installNonMainProcessHooks()
         }
+        fullyInstalled = true
+    }
+
+    fun install(classLoader: ClassLoader) {
+        installCritical(classLoader)
+        installDeferred(classLoader)
     }
 
     private fun installMainProcessHooks(classLoader: ClassLoader) {

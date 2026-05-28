@@ -12,7 +12,6 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal object KillGuardHooks {
     private val installed = AtomicBoolean(false)
-    private val processStartMs = System.currentTimeMillis()
 
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
@@ -21,7 +20,41 @@ internal object KillGuardHooks {
         hookGuardManager(classLoader)
         hookAppRuntime(classLoader)
         hookGKillProcessMonitor(classLoader)
+        hookSystemMethodProxy(classLoader)
         log("kill guard installed")
+    }
+
+    /** QQ's perf module wraps killProcess; intercept it to stop self-kill on Shamrock-induced errors. */
+    private fun hookSystemMethodProxy(classLoader: ClassLoader) {
+        val cls = runCatching {
+            classLoader.loadClass("com.tencent.mobileqq.perf.block.SystemMethodProxy")
+        }.getOrNull() ?: return
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "killProcess", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val pid = param.args.getOrNull(0) as? Int ?: return
+                    if (pid != Process.myPid() && pid != 0) return
+                    if (!isShamrockInducedStack()) return
+                    log("blocked SystemMethodProxy.killProcess($pid) — Shamrock-induced")
+                    param.result = null
+                }
+            })
+        }
+    }
+
+    /**
+     * Block kills that originate from a stack frame referencing our module —
+     * e.g. NativeLoader.load failure cascading into QQ's perf monitor.
+     */
+    private fun isShamrockInducedStack(): Boolean {
+        return currentStack().any { frame ->
+            val cn = frame.className
+            cn.contains("moe.RinShiona.Shamrock", ignoreCase = true) ||
+                cn.contains("Shamrock", ignoreCase = true) ||
+                cn.contains("NativeLoader", ignoreCase = true) ||
+                cn.contains("PullConfig", ignoreCase = true) ||
+                cn.contains("InitRemoteService", ignoreCase = true)
+        }
     }
 
     private fun hookJvmExit() {
@@ -137,13 +170,14 @@ internal object KillGuardHooks {
         }
     }
 
+    /**
+     * Only block QQ self-kill when a detection hook just fired and armed the shield.
+     * Do not blanket-block during cold start — that leaves a broken process on white screen.
+     */
     private fun shouldBlock(): Boolean {
-        if (DetectionKillShield.isArmed()) return true
-        if (isSecurityStack()) return true
-        if (isTencentDetectionStack()) return true
-        // Cold-start window: hook scan + sensitive method probes (~0-90s).
-        if (System.currentTimeMillis() - processStartMs < 90_000) return true
-        return false
+        if (isShamrockInducedStack()) return true
+        if (!DetectionKillShield.isArmed()) return false
+        return isSecurityStack() || isTencentDetectionStack()
     }
 
     private fun isSecurityStack(): Boolean {

@@ -108,7 +108,7 @@ const JNINativeMethod kNativeMethods[] = {
      reinterpret_cast<void *>(native_check_status)},
     {"nativeGetSign",
      "(Ljava/lang/String;Ljava/lang/String;[B[BLjava/lang/String;)"
-     "Lcom/tencent/mobileqq/sign/QQSecuritySign$SignResult;",
+     "Ljava/lang/Object;",
      reinterpret_cast<void *>(native_get_sign)},
     {"nativeEnergy",
      "(Ljava/lang/String;[B)[B",
