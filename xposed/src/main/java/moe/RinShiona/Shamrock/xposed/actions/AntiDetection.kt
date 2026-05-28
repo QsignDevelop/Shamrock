@@ -8,6 +8,8 @@ import android.os.Build
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import mqq.app.MobileQQ
 import java.io.BufferedReader
@@ -73,8 +75,8 @@ internal class AntiDetection : IAction {
             "com.yellowes.su",
             "com.topjohnwu.magisk",
             "com.ryandev.hidesu",
-            "com.tutuapp.tutuhelper"
-        )
+            "com.tutuapp.tutuhelper",
+        ) + ModuleHide.packageNames
 
         private val DANGEROUS_PATHS = listOf(
             "/data/user_de/0/de.robv.android.xposed.installer",
@@ -85,7 +87,9 @@ internal class AntiDetection : IAction {
             "/system/app/VSuperSU",
             "/data/local/xposed",
             "/system/xposed",
-            "/data/data/org.lsposed.manager"
+            "/data/data/org.lsposed.manager",
+            "/data/data/${ModuleHide.PACKAGE}",
+            "/data/user/0/${ModuleHide.PACKAGE}",
         )
 
         // QQ 9.2.90 specific anti-detection probe classes
@@ -115,6 +119,7 @@ internal class AntiDetection : IAction {
         // Each phase is independent. We deliberately try all of them even
         // if some fail ? anti-detection is layered.
         runPhase("CoreDetection", ::hookCoreDetection)
+        runPhase("ModuleHide", { ModuleHideHooks.installMapsFilter() })
         if (AntiDetectionConfig.hideFiles)       runPhase("FileDetection",    ::hookFileDetection)
         if (AntiDetectionConfig.hideProps)       runPhase("SystemProperties", ::hookSystemProperties)
         if (AntiDetectionConfig.hideProc || AntiDetectionConfig.hideNative)
@@ -128,6 +133,7 @@ internal class AntiDetection : IAction {
         if (AntiDetectionConfig.hideLSPosed)     runPhase("LSPosedHide",      ::hookLSPosedSpecific)
 
         // NEW for 9.2.90: bypass ArtTiHookTask + QSec.detectMethod
+        // (EarlyAntiDetection already installed at loadPackage; this is backup)
         runPhase("ArtTiHookBypass", { hookArtTiHookBypass(ctx) })
 
         log("AntiDetection initialization complete")
@@ -160,6 +166,13 @@ internal class AntiDetection : IAction {
                     val name = param.args[0] as? String ?: return
                     if (XPOSED_KEYWORDS.any { name.contains(it, ignoreCase = true) }) {
                         param.throwable = ClassNotFoundException(name)
+                        return
+                    }
+                    // Hide our module classes from QSec scanners only (not from Shamrock itself).
+                    if (ModuleHide.isSecurityScannerCaller() &&
+                        ModuleHide.traceKeywords.any { name.contains(it, ignoreCase = true) }
+                    ) {
+                        param.throwable = ClassNotFoundException(name)
                     }
                 }
             }
@@ -175,6 +188,12 @@ internal class AntiDetection : IAction {
                         if (!AntiDetectionConfig.hideClassLoader) return
                         val name = param.args[0] as? String ?: return
                         if (XPOSED_KEYWORDS.any { name.contains(it, ignoreCase = true) }) {
+                            param.throwable = ClassNotFoundException(name)
+                            return
+                        }
+                        if (ModuleHide.isSecurityScannerCaller() &&
+                            ModuleHide.traceKeywords.any { name.contains(it, ignoreCase = true) }
+                        ) {
                             param.throwable = ClassNotFoundException(name)
                         }
                     }
@@ -225,6 +244,7 @@ internal class AntiDetection : IAction {
     }
 
     private fun shouldHide(path: String): Boolean {
+        if (ModuleHide.matchesPath(path)) return true
         if (DANGEROUS_PATHS.any { path.startsWith(it) }) return true
         if (XPOSED_KEYWORDS.any { path.contains(it, ignoreCase = true) }) return true
         if (AntiDetectionConfig.hideMagisk && MAGISK_KEYWORDS.any { path.contains(it, ignoreCase = true) }) return true
@@ -308,7 +328,9 @@ internal class AntiDetection : IAction {
         XposedBridge.hookAllMethods(pmIface, "getPackageInfo", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val name = param.args.getOrNull(0) as? String ?: return
-                if (DANGEROUS_APPS.any { name == it || name.contains(it) }) {
+                if (DANGEROUS_APPS.any { name == it || name.contains(it) } ||
+                    ModuleHide.matchesPackage(name)
+                ) {
                     param.throwable = android.content.pm.PackageManager.NameNotFoundException(name)
                 }
             }
@@ -317,7 +339,9 @@ internal class AntiDetection : IAction {
         XposedBridge.hookAllMethods(pmIface, "getApplicationInfo", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val name = param.args.getOrNull(0) as? String ?: return
-                if (DANGEROUS_APPS.any { name == it || name.contains(it) }) {
+                if (DANGEROUS_APPS.any { name == it || name.contains(it) } ||
+                    ModuleHide.matchesPackage(name)
+                ) {
                     param.throwable = android.content.pm.PackageManager.NameNotFoundException(name)
                 }
             }
@@ -331,9 +355,9 @@ internal class AntiDetection : IAction {
                     val pkgField = try {
                         item?.javaClass?.getField("packageName")?.get(item) as? String
                     } catch (_: Throwable) { null }
-                    pkgField == null || DANGEROUS_APPS.none { dangerous ->
+                    pkgField == null || (DANGEROUS_APPS.none { dangerous ->
                         pkgField.contains(dangerous)
-                    }
+                    } && !ModuleHide.matchesPackage(pkgField))
                 }
                 if (filtered.size != list.size) {
                     param.result = filtered
@@ -349,9 +373,9 @@ internal class AntiDetection : IAction {
                     val pkgField = try {
                         item?.javaClass?.getField("packageName")?.get(item) as? String
                     } catch (_: Throwable) { null }
-                    pkgField == null || DANGEROUS_APPS.none { dangerous ->
+                    pkgField == null || (DANGEROUS_APPS.none { dangerous ->
                         pkgField.contains(dangerous)
-                    }
+                    } && !ModuleHide.matchesPackage(pkgField))
                 }
                 if (filtered.size != list.size) {
                     param.result = filtered

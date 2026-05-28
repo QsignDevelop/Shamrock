@@ -7,6 +7,7 @@ import de.robv.android.xposed.XposedBridge.log
 import de.robv.android.xposed.XposedHelpers
 import de.robv.android.xposed.callbacks.XC_LoadPackage
 import moe.RinShiona.Shamrock.utils.MMKVFetcher
+import moe.RinShiona.Shamrock.xposed.actions.EarlyAntiDetection
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.loader.FuckAMS
@@ -67,6 +68,14 @@ internal class XposedEntry: IXposedHookLoadPackage {
      * 这样无论用户用的是 9.1.x、9.2.85 还是 9.2.90 NT 都能正常启动。
      */
     private fun entryMQQ(classLoader: ClassLoader) {
+        // BEFORE any other Shamrock hook — QQ 9.2.90 ArtTiHookTask runs very early.
+        EarlyAntiDetection.install(classLoader)
+        kotlin.runCatching {
+            ShamrockNative.bootstrap()
+        }.onFailure {
+            log("Shamrock: early native bootstrap failed (non-fatal): ${it.message}")
+        }
+
         val startup = afterHook(51) { param ->
             try {
                 val loader = param.thisObject.javaClass.classLoader
@@ -302,11 +311,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
             }
             log("Shamrock: Process Name = $processName")
 
-            // Bring up libshamrock.so as the VERY first thing inside QQ's
-            // process. This installs the native /proc/self/maps filter,
-            // the dlopen blocklist, and the JNI sign bridge BEFORE QQ's
-            // own ColdStartupTask.ArtTiHookTask gets a chance to probe.
-            // Java-level Xposed hooks from AntiDetection.kt run after this.
+            // Native subsystem already bootstrapped in entryMQQ(); repeat is idempotent.
             try {
                 ShamrockNative.bootstrap()
             } catch (e: Throwable) {
