@@ -12,6 +12,7 @@ import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
 import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
+import moe.RinShiona.Shamrock.xposed.helper.SignExtraSanitizer
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import mqq.app.MobileQQ
 import java.io.BufferedReader
@@ -142,7 +143,10 @@ internal class AntiDetection : IAction {
                                                   runPhase("PackageDetection", ::hookPackageDetection)
         if (AntiDetectionConfig.hideMagisk)      runPhase("MagiskDetection",  ::hookMagiskDetection)
         if (AntiDetectionConfig.hideSignature)   runPhase("SignatureVerify",  ::hookSignatureVerification)
-        if (AntiDetectionConfig.hookSign)        runPhase("FEKitSignHook",    { hookFEKitSign(ctx) })
+        if (AntiDetectionConfig.hookSign) {
+            runPhase("FEKitSignHook",         { hookFEKitSign(ctx) })
+            runPhase("QQSecuritySignDirect",  ::hookQQSecuritySignDirect)
+        }
         if (AntiDetectionConfig.hideNetwork)     runPhase("NetworkDetection", ::hookNetworkDetection)
         if (AntiDetectionConfig.hideLSPosed)     runPhase("LSPosedHide",      ::hookLSPosedSpecific)
 
@@ -493,8 +497,15 @@ internal class AntiDetection : IAction {
             instance.javaClass.declaredMethods.filter { it.name == "getSign" }.forEach { m ->
                 XposedBridge.hookMethod(m, object : XC_MethodHook() {
                     override fun afterHookedMethod(param: MethodHookParam) {
+                        // 1. Strip QQ's anti-tamper detection bits from extra BEFORE
+                        //    anything in QQ (or the server) reads them back. This is
+                        //    the byte-pattern fix for the `01 31 10 82 02 ... 6f 00`
+                        //    detected vs `01 31 00 00 00 ... 2f 02` clean signature.
+                        param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
+
+                        // 2. If native call still returned null/empty, fall through
+                        //    to the remote qsign server (Neko mode).
                         val result = param.result
-                        // If native call returned null or empty SignResult, fall through to remote.
                         if (AntiDetectionConfig.useRemoteQSign && resultLooksEmpty(result)) {
                             val args = param.args
                             val cmd = args.getOrNull(0) as? String ?: return
@@ -503,7 +514,7 @@ internal class AntiDetection : IAction {
                             val uin = args.getOrNull(3) as? String ?: ""
                             val remote = fetchSignFromRemote(cmd, buf, seq, uin)
                             if (remote != null) {
-                                param.result = remote
+                                param.result = SignExtraSanitizer.sanitizeSignResult(remote)
                                 log("FEKit.getSign result replaced by remote qsign")
                             }
                         }
@@ -512,6 +523,38 @@ internal class AntiDetection : IAction {
             }
         } catch (e: Throwable) {
             log("hookFEKitInstanceSign error: ${e.message}")
+        }
+    }
+
+    /**
+     * Direct hook on `QQSecuritySign.getSign` — covers code paths in QQ NT that
+     * bypass `FEKit.getSign` and call the security-sign singleton directly
+     * (e.g. low-level SSO emit, `BaseAction.send*`).
+     */
+    private fun hookQQSecuritySignDirect() {
+        val qqLoader = try {
+            MobileQQ.getContext()?.classLoader
+        } catch (_: Throwable) {
+            log("QQSecuritySign hook: cannot get QQ classloader")
+            return
+        } ?: return
+
+        val signClass = try {
+            qqLoader.loadClass("com.tencent.mobileqq.sign.QQSecuritySign")
+        } catch (e: Throwable) {
+            log("QQSecuritySign hook: class not found: ${e.message}")
+            return
+        }
+
+        try {
+            XposedBridge.hookAllMethods(signClass, "getSign", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
+                }
+            })
+            log("QQSecuritySign.getSign direct sanitizer installed")
+        } catch (e: Throwable) {
+            log("QQSecuritySign hook: install error: ${e.message}")
         }
     }
 

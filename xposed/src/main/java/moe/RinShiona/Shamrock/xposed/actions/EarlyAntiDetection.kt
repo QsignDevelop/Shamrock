@@ -6,11 +6,14 @@ import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import moe.RinShiona.Shamrock.xposed.helper.DetectionKillShield
+import moe.RinShiona.Shamrock.xposed.helper.HookEvasion
 import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
 import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.QQ9290DetectionHooks
+import moe.RinShiona.Shamrock.xposed.helper.QSecBypassHooks
+import moe.RinShiona.Shamrock.xposed.helper.SignExtraSanitizer
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 
 /**
@@ -37,6 +40,12 @@ internal object EarlyAntiDetection {
         log("installing critical bypass (proc=${currentProcessName()})")
         QQ9290DetectionHooks.installCritical(classLoader)
         KillGuardHooks.install(classLoader)
+        // Heavy-hitting QSec / Dtc / QsecEst scan loop bypass — runs BEFORE the
+        // first sign call so libfekit's native scan returns an empty result set.
+        QSecBypassHooks.install(classLoader)
+        // Hide hook frames from stack-trace + reflection probes that the QQ NT
+        // anti-tamper coroutines run between cold-start tasks.
+        HookEvasion.install(classLoader)
     }
 
     /** Pandora / stack / Dtc sanitizers — run off main thread after splash. */
@@ -114,6 +123,30 @@ internal object EarlyAntiDetection {
         }
         if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideSignature) {
             hookLibFeKitLoad()
+        }
+        if (AntiDetectionConfig.hookSign) {
+            hookSignExtraSanitizer(classLoader)
+        }
+    }
+
+    /**
+     * Install the byte-level [SignExtraSanitizer] on `QQSecuritySign.getSign`
+     * as early as possible — before [AntiDetection.invoke] reaches FEKit.
+     * This ensures the very first sign call (which usually happens on the
+     * MSF login path right after Application.onCreate) already sees a clean
+     * extra header even if the rest of [AntiDetection] hasn't run yet.
+     */
+    private fun hookSignExtraSanitizer(classLoader: ClassLoader) {
+        runCatching {
+            val cls = classLoader.loadClass("com.tencent.mobileqq.sign.QQSecuritySign")
+            XposedBridge.hookAllMethods(cls, "getSign", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
+                }
+            })
+            log("SignExtraSanitizer bound on QQSecuritySign.getSign (early)")
+        }.onFailure {
+            log("early sign sanitizer install failed: ${it.message}")
         }
     }
 
