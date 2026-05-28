@@ -179,7 +179,6 @@ internal object QQ9290DetectionHooks {
             XposedBridge.hookAllMethods(qsec, "doSomething", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     DetectionKillShield.arm()
-                    param.result = 0
                 }
             })
         }

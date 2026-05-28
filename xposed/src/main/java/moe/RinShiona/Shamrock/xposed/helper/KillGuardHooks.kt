@@ -141,8 +141,8 @@ internal object KillGuardHooks {
         if (DetectionKillShield.isArmed()) return true
         if (isSecurityStack()) return true
         if (isTencentDetectionStack()) return true
-        // Cold-start window: hook scan + sensitive method probes (~0-3 min).
-        if (System.currentTimeMillis() - processStartMs < 180_000) return true
+        // Cold-start window: hook scan + sensitive method probes (~0-90s).
+        if (System.currentTimeMillis() - processStartMs < 90_000) return true
         return false
     }
 

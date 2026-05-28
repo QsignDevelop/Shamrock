@@ -9,20 +9,20 @@ import java.util.zip.ZipFile
 /**
  * Kotlin <-> native bridge for libshamrocknt.so.
  *
- * LSPosed loads module code via LspModuleClassLoader; on some ROMs
- * System.loadLibrary("shamrocknt") cannot see libs inside the module APK.
- * We fall back to explicit paths / zip extraction (same pattern as NativeLoader).
+ * libshamrocknt depends on libshadowhook.so. When injected into QQ we must load
+ * shadowhook first (from the module APK / nativeLibraryDir), never a lone
+ * libshamrocknt.so extracted into QQ cache.
  */
 internal object ShamrockNative {
 
-    private const val LIB_NAME = "shamrocknt"
+    private const val LIB_NT = "shamrocknt"
+    private const val LIB_SHADOW = "shadowhook"
+    private const val MODULE_PKG = "moe.RinShiona.Shamrock"
 
-    /** Whether libshamrocknt.so was loaded successfully. */
     @JvmStatic
     var libraryLoaded: Boolean = false
         private set
 
-    /** Whether nativeInit() reported success. */
     @JvmStatic
     var initialized: Boolean = false
         private set
@@ -31,7 +31,7 @@ internal object ShamrockNative {
     fun bootstrap(hostCtx: Context? = null): Boolean {
         if (initialized) return true
         if (!libraryLoaded) {
-            libraryLoaded = loadNativeLibrary(hostCtx)
+            libraryLoaded = loadNativeLibraries(hostCtx)
             if (!libraryLoaded) return false
         }
         return try {
@@ -44,42 +44,87 @@ internal object ShamrockNative {
         }
     }
 
-    private fun loadNativeLibrary(hostCtx: Context?): Boolean {
-        try {
-            System.loadLibrary(LIB_NAME)
-            XposedBridge.log("[ShamrockNative] libshamrocknt.so loaded via loadLibrary")
-            return true
-        } catch (e: UnsatisfiedLinkError) {
-            XposedBridge.log("[ShamrockNative] loadLibrary failed: ${e.message}")
-        }
-
-        val ctx = hostCtx ?: kotlin.runCatching {
-            Class.forName("mqq.app.MobileQQ")
-                .getMethod("getContext")
-                .invoke(null) as Context
-        }.getOrNull()
-
-        if (ctx != null) {
-            kotlin.runCatching {
-                val ai = ctx.packageManager.getApplicationInfo("moe.RinShiona.Shamrock", 0)
-                val fromNativeDir = File(ai.nativeLibraryDir, "lib$LIB_NAME.so")
-                if (fromNativeDir.exists()) {
-                    System.load(fromNativeDir.absolutePath)
-                    XposedBridge.log("[ShamrockNative] loaded from nativeLibraryDir: $fromNativeDir")
-                    return true
-                }
-                if (extractAndLoad(ai.sourceDir, ctx)) return true
-            }.onFailure {
-                XposedBridge.log("[ShamrockNative] ApplicationInfo load failed: ${it.message}")
-            }
-        }
-
+    private fun loadNativeLibraries(hostCtx: Context?): Boolean {
+        val ctx = hostCtx ?: currentHostContext()
+        if (ctx != null && loadFromModuleNativeDir(ctx)) return true
         resolveModuleApkPath()?.let { apk ->
-            if (extractAndLoad(apk, ctx)) return true
+            if (ctx != null && extractAndLoadPair(apk, ctx)) return true
         }
-
-        XposedBridge.log("[ShamrockNative] all load paths failed for lib$LIB_NAME.so")
+        XposedBridge.log("[ShamrockNative] all load paths failed")
         return false
+    }
+
+    private fun currentHostContext(): Context? {
+        return kotlin.runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as Context
+        }.getOrElse {
+            kotlin.runCatching {
+                Class.forName("mqq.app.MobileQQ")
+                    .getMethod("getContext")
+                    .invoke(null) as Context
+            }.getOrNull()
+        }
+    }
+
+    /** Preferred path: both .so files from Shamrock module nativeLibraryDir. */
+    private fun loadFromModuleNativeDir(hostCtx: Context): Boolean {
+        return kotlin.runCatching {
+            val ai = hostCtx.packageManager.getApplicationInfo(MODULE_PKG, 0)
+            val dir = ai.nativeLibraryDir ?: return false
+            val shadow = File(dir, "lib$LIB_SHADOW.so")
+            val nt = File(dir, "lib$LIB_NT.so")
+            if (!shadow.exists() || !nt.exists()) {
+                XposedBridge.log("[ShamrockNative] module native dir missing so: shadow=${shadow.exists()} nt=${nt.exists()}")
+                return false
+            }
+            System.load(shadow.absolutePath)
+            XposedBridge.log("[ShamrockNative] loaded $shadow")
+            System.load(nt.absolutePath)
+            XposedBridge.log("[ShamrockNative] loaded $nt")
+            true
+        }.getOrElse {
+            XposedBridge.log("[ShamrockNative] loadFromModuleNativeDir failed: ${it.message}")
+            false
+        }
+    }
+
+    private fun extractAndLoadPair(apkPath: String, hostCtx: Context): Boolean {
+        return kotlin.runCatching {
+            ZipFile(apkPath).use { zip ->
+                val abi = Build.SUPPORTED_ABIS.firstOrNull { candidate ->
+                    zip.getEntry("lib/$candidate/lib$LIB_NT.so") != null &&
+                        zip.getEntry("lib/$candidate/lib$LIB_SHADOW.so") != null
+                } ?: return false
+
+                val cacheRoot = File(hostCtx.cacheDir, "shamrocknt").apply { mkdirs() }
+                val shadowOut = File(cacheRoot, "lib$LIB_SHADOW.so")
+                val ntOut = File(cacheRoot, "lib$LIB_NT.so")
+
+                fun extract(entryName: String, out: File) {
+                    if (!out.exists() || out.length() <= 0L) {
+                        zip.getInputStream(zip.getEntry(entryName)!!).use { input ->
+                            out.outputStream().use { output -> input.copyTo(output) }
+                        }
+                        out.setReadable(true, false)
+                        out.setExecutable(true, false)
+                    }
+                }
+
+                extract("lib/$abi/lib$LIB_SHADOW.so", shadowOut)
+                extract("lib/$abi/lib$LIB_NT.so", ntOut)
+
+                System.load(shadowOut.absolutePath)
+                XposedBridge.log("[ShamrockNative] loaded extracted $shadowOut")
+                System.load(ntOut.absolutePath)
+                XposedBridge.log("[ShamrockNative] loaded extracted $ntOut")
+                true
+            }
+        }.getOrElse {
+            XposedBridge.log("[ShamrockNative] extractAndLoadPair failed: ${it.message}")
+            false
+        }
     }
 
     private fun resolveModuleApkPath(): String? {
@@ -95,35 +140,6 @@ internal object ShamrockNative {
             if (it.endsWith(".apk")) return it
         }
         return null
-    }
-
-    private fun extractAndLoad(apkPath: String, hostCtx: Context?): Boolean {
-        return kotlin.runCatching {
-            ZipFile(apkPath).use { zip ->
-                val abi = Build.SUPPORTED_ABIS.firstOrNull { candidate ->
-                    zip.getEntry("lib/$candidate/lib$LIB_NAME.so") != null
-                } ?: return false
-                val entryName = "lib/$abi/lib$LIB_NAME.so"
-                val cacheRoot = hostCtx?.cacheDir
-                    ?: File("/data/data/com.tencent.mobileqq/cache")
-                val out = File(cacheRoot, "shamrocknt/lib$LIB_NAME.so").apply {
-                    parentFile?.mkdirs()
-                }
-                if (!out.exists() || out.length() <= 0L) {
-                    zip.getInputStream(zip.getEntry(entryName)!!).use { input ->
-                        out.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    out.setReadable(true, false)
-                    out.setExecutable(true, false)
-                }
-                System.load(out.absolutePath)
-                XposedBridge.log("[ShamrockNative] loaded from extracted $out (apk=$apkPath)")
-                true
-            }
-        }.getOrElse {
-            XposedBridge.log("[ShamrockNative] extractAndLoad failed: ${it.message}")
-            false
-        }
     }
 
     fun status(): String {

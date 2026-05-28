@@ -113,11 +113,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
 
     private fun installEarlyStage(classLoader: ClassLoader) {
         kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
-        kotlin.runCatching {
-            ShamrockNative.bootstrap()
-        }.onFailure {
-            plog("early native bootstrap failed (non-fatal): ${it.message}")
-        }
+        // Native bootstrap runs only after Application Context exists (attachBaseContext / onCreate).
         if (AntiDetectionConfig.allowEarlyHooks()) {
             EarlyAntiDetection.install(classLoader)
         } else {
@@ -232,6 +228,12 @@ internal class XposedEntry: IXposedHookLoadPackage {
 
     private fun resolveContextFromLoader(loader: ClassLoader): Context? {
         kotlin.runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? Context
+        }.getOrNull()?.let { return it }
+
+        kotlin.runCatching {
             MobileQQ.getContext()?.let { ctx ->
                 return ctx.applicationContext ?: ctx
             }
@@ -283,8 +285,11 @@ internal class XposedEntry: IXposedHookLoadPackage {
             XposedBridge.hookMethod(attach, object : de.robv.android.xposed.XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val ctx = param.args.getOrNull(0) as? Context ?: return
-                    ShamrockNative.bootstrap(ctx)
-                    plog("native bootstrap retried from attachBaseContext")
+                    if (ShamrockNative.bootstrap(ctx)) {
+                        plog("native bootstrap OK from attachBaseContext")
+                    } else {
+                        plog("native bootstrap deferred (attachBaseContext)")
+                    }
                 }
             })
             plog("hooked BaseApplicationImpl.attachBaseContext (early native retry)")

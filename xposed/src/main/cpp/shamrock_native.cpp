@@ -147,8 +147,7 @@ jint JNI_OnLoad(JavaVM *vm, void * /*reserved*/) {
     }
     env->DeleteLocalRef(cls);
 
-    // Install maps/exit hooks immediately — before nativeInit() is called from Java.
-    shamrock_anti_detect_init(env);
+    // Anti-detect hooks are installed from nativeInit() after shadowhook_init().
 
     LOGI("JNI_OnLoad: registered %zu native methods on %s",
          sizeof(kNativeMethods) / sizeof(kNativeMethods[0]), kNativeClass);
