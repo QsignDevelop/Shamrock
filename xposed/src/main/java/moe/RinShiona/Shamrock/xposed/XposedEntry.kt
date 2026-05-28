@@ -12,6 +12,7 @@ import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.loader.FuckAMS
 import moe.RinShiona.Shamrock.xposed.loader.LuoClassloader
+import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.tools.FuzzySearchClass
 import moe.RinShiona.Shamrock.tools.afterHook
 import moe.RinShiona.Shamrock.utils.PlatformUtils
@@ -80,12 +81,17 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — installing startup hooks")
+        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
         kotlin.runCatching {
             ShamrockNative.bootstrap()
         }.onFailure {
             plog("early native bootstrap failed (non-fatal): ${it.message}")
         }
-        EarlyAntiDetection.install(classLoader)
+        if (AntiDetectionConfig.enabled) {
+            EarlyAntiDetection.install(classLoader)
+        } else {
+            plog("early anti-detection disabled by config")
+        }
         tryHookAttachBaseContext(classLoader)
 
         val startup = afterHook(51) { param ->
