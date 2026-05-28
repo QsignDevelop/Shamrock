@@ -5,6 +5,7 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
+import moe.RinShiona.Shamrock.xposed.helper.DetectionKillShield
 import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
@@ -37,6 +38,8 @@ internal object EarlyAntiDetection {
             AntiDetectionConfig.hideTrace || AntiDetectionConfig.hideProc
         ) {
             QQ9290DetectionHooks.install(classLoader)
+            KillGuardHooks.install(classLoader)
+            DetectionKillShield.arm(120_000)
         }
         if (isMain) {
             installMainProcessHooks(classLoader)
@@ -59,9 +62,6 @@ internal object EarlyAntiDetection {
         }
         if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideSignature) {
             hookLibFeKitLoad()
-        }
-        if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideTrace) {
-            KillGuardHooks.install(classLoader)
         }
     }
 

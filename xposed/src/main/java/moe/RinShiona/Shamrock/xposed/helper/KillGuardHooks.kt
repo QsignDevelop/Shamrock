@@ -20,6 +20,7 @@ internal object KillGuardHooks {
         hookMobileQQ(classLoader)
         hookGuardManager(classLoader)
         hookAppRuntime(classLoader)
+        hookGKillProcessMonitor(classLoader)
         log("kill guard installed")
     }
 
@@ -52,8 +53,7 @@ internal object KillGuardHooks {
         runCatching { XposedBridge.hookAllMethods(System::class.java, "exit", block) }
 
         runCatching {
-            val cls = Process::class.java
-            XposedBridge.hookAllMethods(cls, "sendSignal", object : XC_MethodHook() {
+            XposedBridge.hookAllMethods(Process::class.java, "sendSignal", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val pid = param.args.getOrNull(0) as? Int ?: return
                     if (pid != Process.myPid()) return
@@ -109,46 +109,78 @@ internal object KillGuardHooks {
         runCatching {
             XposedBridge.hookAllMethods(cls, "kick", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (!isSecurityStack()) return
-                    log("blocked AppRuntime.kick (security)")
+                    if (!shouldBlock()) return
+                    log("blocked AppRuntime.kick")
                     param.result = null
                 }
             })
         }
     }
 
-    private fun shouldBlock(): Boolean {
-        if (isSecurityStack()) return true
-        // Cold-start window: QQ often self-kills right after hook scan (~0-90s).
-        if (System.currentTimeMillis() - processStartMs > 90_000) return false
-        return Thread.currentThread().stackTrace.any { frame ->
-            val cn = frame.className
-            cn.contains("com.tencent.mobileqq") &&
-                (cn.contains("startup") ||
-                    cn.contains("Guard") ||
-                    cn.contains("qsec") ||
-                    cn.contains("ArtTi") ||
-                    cn.contains("NativeMonitor") ||
-                    cn.contains("processkiller"))
+    /** AV layer process killer used after security failures on some builds. */
+    private fun hookGKillProcessMonitor(classLoader: ClassLoader) {
+        val cls = runCatching {
+            classLoader.loadClass("com.tencent.av.app.GKillProcessMonitor")
+        }.getOrNull() ?: return
+        cls.declaredMethods.forEach { method ->
+            val name = method.name.lowercase()
+            if (!name.contains("kill") && !name.contains("exit")) return@forEach
+            runCatching {
+                XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        if (!shouldBlock()) return
+                        log("blocked GKillProcessMonitor.${method.name}")
+                        param.result = null
+                    }
+                })
+            }
         }
     }
 
+    private fun shouldBlock(): Boolean {
+        if (DetectionKillShield.isArmed()) return true
+        if (isSecurityStack()) return true
+        if (isTencentDetectionStack()) return true
+        // Cold-start window: hook scan + sensitive method probes (~0-3 min).
+        if (System.currentTimeMillis() - processStartMs < 180_000) return true
+        return false
+    }
+
     private fun isSecurityStack(): Boolean {
-        return Thread.currentThread().stackTrace.any { frame ->
+        return currentStack().any { frame -> securityClassMatches(frame.className) }
+    }
+
+    private fun isTencentDetectionStack(): Boolean {
+        return currentStack().any { frame ->
             val cn = frame.className
-            cn.contains("qsec", ignoreCase = true) ||
-                cn.contains("qsecurity", ignoreCase = true) ||
-                cn.contains("ArtTiHook", ignoreCase = true) ||
-                cn.contains("GuardCheck", ignoreCase = true) ||
-                cn.contains("GuardManager", ignoreCase = true) ||
-                cn.contains("GuardInit", ignoreCase = true) ||
-                cn.contains("CodeCheck", ignoreCase = true) ||
-                cn.contains("NativeMonitor", ignoreCase = true) ||
-                cn.contains("processkiller", ignoreCase = true) ||
-                cn.contains("libfekit", ignoreCase = true) ||
-                cn.contains("dt.app", ignoreCase = true) ||
-                cn.contains("mobileqq.fe", ignoreCase = true)
+            cn.contains("com.tencent.mobileqq") &&
+                (cn.contains("qmethod", ignoreCase = true) ||
+                    cn.contains("pandoraex", ignoreCase = true) ||
+                    cn.contains("privacy", ignoreCase = true) ||
+                    cn.contains("mobileqq.fe", ignoreCase = true) ||
+                    cn.contains("dt.app", ignoreCase = true) ||
+                    cn.contains("startup", ignoreCase = true) ||
+                    cn.contains("GKillProcess", ignoreCase = true))
         }
+    }
+
+    private fun securityClassMatches(className: String): Boolean {
+        return className.contains("qsec", ignoreCase = true) ||
+            className.contains("qsecurity", ignoreCase = true) ||
+            className.contains("ArtTiHook", ignoreCase = true) ||
+            className.contains("GuardCheck", ignoreCase = true) ||
+            className.contains("GuardManager", ignoreCase = true) ||
+            className.contains("GuardInit", ignoreCase = true) ||
+            className.contains("CodeCheck", ignoreCase = true) ||
+            className.contains("NativeMonitor", ignoreCase = true) ||
+            className.contains("processkiller", ignoreCase = true) ||
+            className.contains("libfekit", ignoreCase = true) ||
+            className.contains("dt.app", ignoreCase = true) ||
+            className.contains("mobileqq.fe", ignoreCase = true)
+    }
+
+    private fun currentStack(): Array<StackTraceElement> {
+        return Thread.currentThread().stackTrace
     }
 
     private fun log(msg: String) {

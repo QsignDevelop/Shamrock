@@ -25,6 +25,7 @@
 #include <cstring>
 #include <cstdlib>
 #include <atomic>
+#include <csignal>
 #include <string>
 #include <vector>
 
@@ -375,37 +376,67 @@ using kill_fn = int (*)(int, int);
 kill_fn g_orig_kill = nullptr;
 void *g_kill_stub = nullptr;
 
-bool address_in_module(void *addr, const char *lib_substr) {
-    if (addr == nullptr) return false;
-    FILE *fp = ::fopen("/proc/self/maps", "r");
-    if (fp == nullptr) return false;
-    char line[1024];
-    bool found = false;
-    auto target = reinterpret_cast<uintptr_t>(addr);
-    while (::fgets(line, sizeof(line), fp) != nullptr) {
-        if (std::strstr(line, lib_substr) == nullptr) continue;
-        uintptr_t start = 0, end = 0;
-        if (std::sscanf(line, "%lx-%lx", &start, &end) == 2) {
-            if (target >= start && target < end) {
-                found = true;
-                break;
-            }
+bool maps_line_matches_security_lib(const char *line) {
+    if (line == nullptr) return false;
+    static const char *kSecurityLibs[] = {
+        "libfekit.so",
+        "libQSec.so",
+        "libqsec.so",
+        "libbasic_share.so",
+        "libkernel.so",
+        "libntkernel.so",
+        "libqqsec",
+        "libmsfboot",
+        nullptr,
+    };
+    for (int i = 0; kSecurityLibs[i] != nullptr; i++) {
+        if (std::strstr(line, kSecurityLibs[i]) != nullptr) {
+            return true;
         }
     }
-    ::fclose(fp);
-    return found;
+    return false;
 }
 
 bool security_lib_caller(void *ret_addr) {
-    return address_in_module(ret_addr, "libfekit.so") ||
-           address_in_module(ret_addr, "libQSec.so") ||
-           address_in_module(ret_addr, "libqsec.so");
+    if (ret_addr == nullptr) return false;
+    // Walk up to 3 frames — security code often inlines exit/kill.
+    void *addrs[4] = {
+        ret_addr,
+        __builtin_return_address(1),
+        __builtin_return_address(2),
+        __builtin_return_address(3),
+    };
+    for (void *addr : addrs) {
+        if (addr == nullptr) continue;
+        FILE *fp = ::fopen("/proc/self/maps", "r");
+        if (fp == nullptr) continue;
+        char line[1024];
+        auto target = reinterpret_cast<uintptr_t>(addr);
+        bool hit = false;
+        while (::fgets(line, sizeof(line), fp) != nullptr) {
+            if (!maps_line_matches_security_lib(line)) continue;
+            uintptr_t start = 0, end = 0;
+            if (std::sscanf(line, "%lx-%lx", &start, &end) == 2) {
+                if (target >= start && target < end) {
+                    hit = true;
+                    break;
+                }
+            }
+        }
+        ::fclose(fp);
+        if (hit) return true;
+    }
+    return false;
+}
+
+bool should_block_self_terminate(void *caller) {
+    return security_lib_caller(caller);
 }
 
 void my_exit(int status) {
     void *caller = __builtin_return_address(0);
-    if (security_lib_caller(caller)) {
-        LOGW("blocked exit(%d) caller=%p (security lib)", status, caller);
+    if (should_block_self_terminate(caller)) {
+        LOGW("blocked exit(%d) caller=%p", status, caller);
         return;
     }
     if (g_orig_exit != nullptr) {
@@ -413,15 +444,60 @@ void my_exit(int status) {
     }
 }
 
+using _exit_fn = void (*)(int);
+_exit_fn g_orig__exit = nullptr;
+void *g__exit_stub = nullptr;
+
+void my__exit(int status) {
+    void *caller = __builtin_return_address(0);
+    if (should_block_self_terminate(caller)) {
+        LOGW("blocked _exit(%d) caller=%p", status, caller);
+        return;
+    }
+    if (g_orig__exit != nullptr) {
+        g_orig__exit(status);
+    }
+}
+
 int my_kill(int pid, int sig) {
     if (pid == ::getpid() || pid == 0) {
         void *caller = __builtin_return_address(0);
-        if (security_lib_caller(caller)) {
-            LOGW("blocked kill(%d,%d) caller=%p (security lib)", pid, sig, caller);
+        if (should_block_self_terminate(caller)) {
+            LOGW("blocked kill(%d,%d) caller=%p", pid, sig, caller);
             return 0;
         }
     }
     return g_orig_kill != nullptr ? g_orig_kill(pid, sig) : -1;
+}
+
+using abort_fn = void (*)();
+abort_fn g_orig_abort = nullptr;
+void *g_abort_stub = nullptr;
+
+void my_abort() {
+    void *caller = __builtin_return_address(0);
+    if (should_block_self_terminate(caller)) {
+        LOGW("blocked abort() caller=%p", caller);
+        return;
+    }
+    if (g_orig_abort != nullptr) {
+        g_orig_abort();
+    }
+}
+
+using raise_fn = int (*)(int);
+raise_fn g_orig_raise = nullptr;
+void *g_raise_stub = nullptr;
+
+int my_raise(int sig) {
+    if (sig == SIGKILL || sig == SIGABRT) {
+        void *caller = __builtin_return_address(0);
+        if (should_block_self_terminate(caller)) {
+            LOGW("blocked raise(%d) caller=%p", sig, caller);
+            return 0;
+        }
+    }
+    return g_orig_raise != nullptr ? g_orig_raise(sig) : -1;
 }
 
 void install_exit_kill_hooks() {
@@ -436,6 +512,17 @@ void install_exit_kill_hooks() {
         LOGI("exit hook installed");
     }
 
+    g__exit_stub = shadowhook_hook_sym_name(
+        "libc.so", "_exit",
+        reinterpret_cast<void *>(&my__exit),
+        reinterpret_cast<void **>(&g_orig__exit)
+    );
+    if (g__exit_stub == nullptr) {
+        LOGE("_exit hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
+    } else {
+        LOGI("_exit hook installed");
+    }
+
     g_kill_stub = shadowhook_hook_sym_name(
         "libc.so", "kill",
         reinterpret_cast<void *>(&my_kill),
@@ -445,6 +532,28 @@ void install_exit_kill_hooks() {
         LOGE("kill hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
     } else {
         LOGI("kill hook installed");
+    }
+
+    g_abort_stub = shadowhook_hook_sym_name(
+        "libc.so", "abort",
+        reinterpret_cast<void *>(&my_abort),
+        reinterpret_cast<void **>(&g_orig_abort)
+    );
+    if (g_abort_stub == nullptr) {
+        LOGE("abort hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
+    } else {
+        LOGI("abort hook installed");
+    }
+
+    g_raise_stub = shadowhook_hook_sym_name(
+        "libc.so", "raise",
+        reinterpret_cast<void *>(&my_raise),
+        reinterpret_cast<void **>(&g_orig_raise)
+    );
+    if (g_raise_stub == nullptr) {
+        LOGE("raise hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
+    } else {
+        LOGI("raise hook installed");
     }
 }
 

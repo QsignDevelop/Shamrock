@@ -14,9 +14,10 @@ internal object StackTraceHideHooks {
     fun install() {
         if (!installed.compareAndSet(false, true)) return
 
+        // Always strip Xposed frames — sensitive-method scans run inside Pandora/Dtc
+        // and the stack still contains our hook frames even when the caller is not QSec.
         val traceFilter = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                if (!ModuleHide.isSecurityScannerCaller()) return
                 val trace = param.result as? Array<*> ?: return
                 val filtered = filterStackTrace(trace)
                 if (filtered.size != trace.size) {
@@ -34,7 +35,6 @@ internal object StackTraceHideHooks {
             val logClass = Class.forName("android.util.Log")
             XposedBridge.hookAllMethods(logClass, "getStackTraceString", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val text = param.result as? String ?: return
                     val sanitized = sanitizeStackTraceText(text)
                     if (sanitized != text) param.result = sanitized
@@ -45,9 +45,10 @@ internal object StackTraceHideHooks {
         runCatching {
             XposedBridge.hookAllMethods(StackTraceElement::class.java, "toString", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val text = param.result as? String ?: return
-                    if (frameTextIsSensitive(text)) param.result = "java.lang.Object.<init>(Unknown Source)"
+                    if (frameTextIsSensitive(text)) {
+                        param.result = "java.lang.Object.<init>(Unknown Source)"
+                    }
                 }
             })
         }

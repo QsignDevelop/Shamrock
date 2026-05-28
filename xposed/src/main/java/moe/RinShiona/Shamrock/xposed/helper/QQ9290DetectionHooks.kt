@@ -115,6 +115,14 @@ internal object QQ9290DetectionHooks {
         }
 
         runCatching {
+            XposedBridge.hookAllMethods(dtc, "dtcProcessCall", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm()
+                }
+            })
+        }
+
+        runCatching {
             XposedBridge.hookAllMethods(dtc, "mmQsecKVValueBytes", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
                     val bytes = param.result as? ByteArray ?: return
@@ -138,7 +146,10 @@ internal object QQ9290DetectionHooks {
                 String::class.java,
                 String::class.java,
                 object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
+                    override fun replaceHookedMethod(param: MethodHookParam): Any {
+                        DetectionKillShield.arm()
+                        return false
+                    }
                 }
             )
         }
@@ -147,6 +158,7 @@ internal object QQ9290DetectionHooks {
             val qsec = classLoader.loadClass(QSEC)
             XposedBridge.hookAllMethods(qsec, "getXpsInfo", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm(15_000)
                     param.result = ByteArray(0)
                 }
             })
@@ -156,8 +168,27 @@ internal object QQ9290DetectionHooks {
             val qsec = classLoader.loadClass(QSEC)
             XposedBridge.hookAllMethods(qsec, "doReport", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (!ModuleHide.isSecurityScannerCaller()) return
+                    DetectionKillShield.arm(15_000)
                     param.result = 0
+                }
+            })
+        }
+
+        runCatching {
+            val qsec = classLoader.loadClass(QSEC)
+            XposedBridge.hookAllMethods(qsec, "doSomething", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm()
+                    param.result = 0
+                }
+            })
+        }
+
+        runCatching {
+            val qsec = classLoader.loadClass(QSEC)
+            XposedBridge.hookAllMethods(qsec, "execTasks", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm(30_000)
                 }
             })
         }
