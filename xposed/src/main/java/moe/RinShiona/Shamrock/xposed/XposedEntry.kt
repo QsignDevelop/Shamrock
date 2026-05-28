@@ -69,24 +69,25 @@ internal class XposedEntry: IXposedHookLoadPackage {
     private fun entryMQQ(classLoader: ClassLoader) {
         val startup = afterHook(51) { param ->
             try {
-                if (!initOnce.compareAndSet(false, true)) {
-                    // Already initialized via another hook path. Skip.
-                    return@afterHook
-                }
-                val loader = param.thisObject.javaClass.classLoader!!
+                val loader = param.thisObject.javaClass.classLoader
+                    ?: param.args.firstOrNull()?.javaClass?.classLoader
+                    ?: return@afterHook
                 LuoClassloader.ctxClassLoader = loader
 
                 val app = resolveBaseApplicationContext(loader, param)
-                if (app != null) {
-                    log("Shamrock: startup triggered via ${param.method.declaringClass.simpleName}.${param.method.name}")
-                    execStartupInit(app)
-                } else {
-                    log("Shamrock: Unable to fetch context from ${param.method}")
+                if (app == null) {
+                    log("Shamrock: startup hook fired before context ready: " +
+                        "${param.method.declaringClass.simpleName}.${param.method.name} — will retry on next tier")
+                    return@afterHook
                 }
+                if (!initOnce.compareAndSet(false, true)) {
+                    return@afterHook
+                }
+                log("Shamrock: startup triggered via ${param.method.declaringClass.simpleName}.${param.method.name}")
+                execStartupInit(app)
             } catch (e: Throwable) {
                 log("Shamrock: entryMQQ startup hook error")
                 log(e)
-                // do NOT clear initOnce - we don't want runaway re-init
             }
         }
 
@@ -104,11 +105,13 @@ internal class XposedEntry: IXposedHookLoadPackage {
         // Tier 4: 历史兼容 — 旧的 startup.task.config 模糊搜索
         val tier4Ok = tryHookLegacyFuzzy(classLoader, startup)
 
-        firstStageInit = tier1Ok || tier2Ok || tier3Ok || tier4Ok
+        // Tier 5: MobileQQ.onCreate — 9.2.90+ 各分支通用兜底
+        val tier5Ok = tryHookMobileQQOnCreate(classLoader, startup)
+
+        firstStageInit = tier1Ok || tier2Ok || tier3Ok || tier4Ok || tier5Ok
         if (!firstStageInit) {
             log("Shamrock: FATAL — no startup hook tier succeeded. " +
-                "QQ version may be too new/old. Falling back to MobileQQ.onCreate as last resort.")
-            tryHookMobileQQOnCreate(classLoader, startup)
+                "QQ version may be too new/old.")
         }
     }
 
@@ -232,10 +235,10 @@ internal class XposedEntry: IXposedHookLoadPackage {
             val mqq = classLoader.loadClass("mqq.app.MobileQQ")
             val onCreate = mqq.getDeclaredMethod("onCreate")
             XposedBridge.hookMethod(onCreate, hook)
-            log("Shamrock: [LAST RESORT] hooked MobileQQ.onCreate()")
+            log("Shamrock: [Tier 5] hooked MobileQQ.onCreate()")
             true
         } catch (e: Throwable) {
-            log("Shamrock: [LAST RESORT] also failed: ${e.message}")
+            log("Shamrock: [Tier 5] hook failed: ${e.message}")
             false
         }
     }

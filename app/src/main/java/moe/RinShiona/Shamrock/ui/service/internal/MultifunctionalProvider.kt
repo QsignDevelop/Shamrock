@@ -59,6 +59,8 @@ class MultifunctionalProvider: ContentProvider() {
 inline fun Context.broadcastToModule(intentBuilder: Intent.() -> Unit) {
     val intent = Intent()
     intent.action = "moe.RinShiona.Shamrock.xqbot.dynamic"
+    // Android 8+ blocks most implicit cross-app broadcasts; target QQ explicitly.
+    intent.setPackage("com.tencent.mobileqq")
     intent.intentBuilder()
     sendBroadcast(intent)
 }

@@ -49,6 +49,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -72,6 +73,7 @@ import moe.RinShiona.Shamrock.ui.fragment.DashboardFragment
 import moe.RinShiona.Shamrock.ui.fragment.HomeFragment
 import moe.RinShiona.Shamrock.ui.fragment.LabFragment
 import moe.RinShiona.Shamrock.ui.fragment.LogFragment
+import moe.RinShiona.Shamrock.ui.service.DashboardInitializer
 import moe.RinShiona.Shamrock.ui.service.internal.broadcastToModule
 import moe.RinShiona.Shamrock.ui.theme.GlobalColor
 import moe.RinShiona.Shamrock.ui.theme.LocalString
@@ -95,13 +97,14 @@ class MainActivity : ComponentActivity() {
                 isAppearanceLightStatusBars = true
             }
             WindowCompat.setDecorFitsSystemWindows(window, true)
+            // Start heartbeat immediately (don't wait for fetchPort from QQ).
+            DashboardInitializer(this, ShamrockConfig.getHttpPort(this))
             broadcastToModule { putExtra("__cmd", "fetchPort") }
         }
     }
 
     override fun onResume() {
         super.onResume()
-        // QQ 已运行时，主动推送配置并尝试拉起 HTTP 服务（避免只勾 LSPosed 却未握手成功）
         ShamrockConfig.pushUpdate(this)
         broadcastToModule { putExtra("__cmd", "checkAndStartService") }
     }
@@ -159,14 +162,15 @@ private fun AppMainView() {
 
     val ctx = LocalContext.current
     @Suppress("LocalVariableName") val LocalString = LocalString
+    var wasActive by remember { mutableStateOf(false) }
     LaunchedEffect(isFined.value) {
-        if (isFined.value) {
+        if (isFined.value && !wasActive) {
             AppRuntime.log("日志框架激活成功，开放操作许可。")
             Toast.makeText(ctx, LocalString.frameworkYes, Toast.LENGTH_SHORT).show()
-        } else {
-            AppRuntime.log("日志框架处于未激活状态，请检查。")
-            Toast.makeText(ctx, LocalString.frameworkNo, Toast.LENGTH_SHORT).show()
+        } else if (!isFined.value && wasActive) {
+            AppRuntime.log("日志框架已断开，请检查 QQ 是否在运行。")
         }
+        wasActive = isFined.value
     }
 
     ShamrockTheme {
