@@ -281,8 +281,18 @@ internal object QSecBypassHooks {
     private fun neuterMonitorReporter(classLoader: ClassLoader) {
         val cls = runCatching { classLoader.loadClass(MONITOR_REPORTER) }.getOrNull() ?: return
 
-        // Block every method that contains "report" — most overloads are static.
-        cls.declaredMethods.filter { it.name.contains("report", ignoreCase = true) }.forEach { m ->
+        // ONLY hook telemetry-emit methods.
+        //
+        //  - Name must START with "report" (so we skip getReporter / addReporter /
+        //    setReporter / hasReporter / clearReporter etc. that return config objects;
+        //    nulling those breaks pandora.core.aa.m(api.d) downstream — observed in
+        //    DeviceInfoMonitor.getModel -> QQBeaconReport.start NPE on 9.2.90).
+        //  - Return type must be primitive void / boolean / int / long. Methods that
+        //    return Object (config / strategy / reporter handle) MUST NOT be nulled.
+        val targets = cls.declaredMethods.filter { m ->
+            m.name.startsWith("report", ignoreCase = true) && isSafeToNull(m.returnType)
+        }
+        targets.forEach { m ->
             runCatching {
                 XposedBridge.hookMethod(m, object : XC_MethodHook() {
                     override fun beforeHookedMethod(param: MethodHookParam) {
@@ -299,7 +309,17 @@ internal object QSecBypassHooks {
             }
         }
 
-        log("Pandora MonitorReporter neutralized (${cls.declaredMethods.count { it.name.contains("report", ignoreCase = true) }} entries)")
+        log("Pandora MonitorReporter neutralized (${targets.size} safe-to-null report entries)")
+    }
+
+    private fun isSafeToNull(returnType: Class<*>): Boolean {
+        return returnType == Void.TYPE ||
+            returnType == Boolean::class.javaPrimitiveType ||
+            returnType == java.lang.Boolean::class.java ||
+            returnType == Int::class.javaPrimitiveType ||
+            returnType == java.lang.Integer::class.java ||
+            returnType == Long::class.javaPrimitiveType ||
+            returnType == java.lang.Long::class.java
     }
 
     private fun log(msg: String) {
