@@ -29,6 +29,16 @@ internal const val PACKAGE_NAME_TIM = "com.tencent.tim"
 
 
 internal class XposedEntry: IXposedHookLoadPackage {
+    private data class HookInstallReport(
+        val tier1: Boolean,
+        val tier2: Boolean,
+        val tier3: Boolean,
+        val tier4: Boolean,
+        val tier5: Boolean,
+    ) {
+        fun any(): Boolean = tier1 || tier2 || tier3 || tier4 || tier5
+    }
+
     companion object {
         @JvmStatic
         var sec_static_stage_inited = false
@@ -81,6 +91,27 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — installing startup hooks")
+        installEarlyStage(classLoader)
+        tryHookAttachBaseContext(classLoader)
+
+        val startup = afterHook(51) { param ->
+            val loader = param.thisObject?.javaClass?.classLoader
+                ?: param.args.firstOrNull()?.javaClass?.classLoader
+                ?: return@afterHook
+            val source = "${param.method.declaringClass.simpleName}.${param.method.name}"
+            tryStartupInit(loader, param, source)
+        }
+
+        val report = installStartupHookTiers(classLoader, startup)
+        firstStageInit = report.any()
+        if (!firstStageInit) {
+            plog("FATAL — no startup hook tier succeeded. QQ version may be too new/old.")
+        } else {
+            scheduleStartupRetry(classLoader, "entryMQQ-fallback")
+        }
+    }
+
+    private fun installEarlyStage(classLoader: ClassLoader) {
         kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
         kotlin.runCatching {
             ShamrockNative.bootstrap()
@@ -92,39 +123,24 @@ internal class XposedEntry: IXposedHookLoadPackage {
         } else {
             plog("early anti-detection disabled by config")
         }
-        tryHookAttachBaseContext(classLoader)
+    }
 
-        val startup = afterHook(51) { param ->
-            val loader = param.thisObject?.javaClass?.classLoader
-                ?: param.args.firstOrNull()?.javaClass?.classLoader
-                ?: return@afterHook
-            val source = "${param.method.declaringClass.simpleName}.${param.method.name}"
-            tryStartupInit(loader, param, source)
-        }
-
-        // Tier 1: 9.1.x / 9.2.85 旧路径
-        val tier1Ok = tryHookLoadDex(classLoader, startup)
-
-        // Tier 2: 9.2.90 NT 新路径 — BaseApplicationImpl.onCreate
-        //   这是最稳定的 hook 点，跨所有 QQ 版本都存在。
-        val tier2Ok = tryHookBaseApplicationOnCreate(classLoader, startup)
-
-        // Tier 3: NT 启动任务（ColdStartupTask 的具体子任务）
-        //   兜底用，如果 Tier1/2 都失败时
-        val tier3Ok = tryHookNTColdStartupTask(classLoader, startup)
-
-        // Tier 4: 历史兼容 — 旧的 startup.task.config 模糊搜索
-        val tier4Ok = tryHookLegacyFuzzy(classLoader, startup)
-
-        // Tier 5: MobileQQ.onCreate — 9.2.90+ 各分支通用兜底
-        val tier5Ok = tryHookMobileQQOnCreate(classLoader, startup)
-
-        firstStageInit = tier1Ok || tier2Ok || tier3Ok || tier4Ok || tier5Ok
-        if (!firstStageInit) {
-            plog("FATAL — no startup hook tier succeeded. QQ version may be too new/old.")
-        } else {
-            scheduleStartupRetry(classLoader, "entryMQQ-fallback")
-        }
+    private fun installStartupHookTiers(
+        classLoader: ClassLoader,
+        startup: de.robv.android.xposed.XC_MethodHook
+    ): HookInstallReport {
+        val tier1 = tryHookLoadDex(classLoader, startup)
+        val tier2 = tryHookBaseApplicationOnCreate(classLoader, startup)
+        val tier3 = tryHookNTColdStartupTask(classLoader, startup)
+        val tier4 = tryHookLegacyFuzzy(classLoader, startup)
+        val tier5 = tryHookMobileQQOnCreate(classLoader, startup)
+        return HookInstallReport(
+            tier1 = tier1,
+            tier2 = tier2,
+            tier3 = tier3,
+            tier4 = tier4,
+            tier5 = tier5
+        )
     }
 
     private fun tryStartupInit(
