@@ -10,6 +10,7 @@ import kotlinx.coroutines.launch
 import moe.RinShiona.Shamrock.remote.HTTPServer
 import moe.RinShiona.Shamrock.remote.service.config.ShamrockConfig
 import moe.RinShiona.Shamrock.utils.PlatformUtils
+import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.xposed.helper.internal.DataRequester
 import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
 import moe.RinShiona.Shamrock.xposed.helper.internal.IPCRequest
@@ -40,11 +41,15 @@ class PullConfig: IAction {
                 if (HTTPServer.isServiceStarted) {
                     HTTPServer.isServiceStarted = false
                 }
+                XPrefConfigLoader.loadIfAvailable()
                 initAppService(MobileQQ.getContext())
             })
             DynamicReceiver.register("push_config", IPCRequest {
                 ctx.toast("动态推送配置文件成功。")
-                ShamrockConfig.updateConfig(it)
+                // MIUI may block this broadcast; reload shared prefs directly.
+                if (!XPrefConfigLoader.loadIfAvailable()) {
+                    ShamrockConfig.updateConfig(it)
+                }
                 // 同步反检测配置
                 moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.apply {
                     enabled = it.getBooleanExtra("anti_detection_enabled", true)
@@ -80,18 +85,24 @@ class PullConfig: IAction {
                 }
             })
 
-            DataRequester.request("init", onFailure = { e ->
-                XposedBridge.log("Shamrock: init handshake failed: ${e.message}")
-                if (!ShamrockConfig.isInit()) {
-                    ctx.toast("请先打开 Shamrock App，再完全退出并重启 QQ（不会杀进程）")
-                } else {
-                    ctx.toast("Shamrock App 未响应，使用缓存配置启动")
+            // HyperOS/MIUI blocks App->QQ broadcast; read LSPosed-shared prefs first.
+            if (XPrefConfigLoader.loadIfAvailable()) {
+                isConfigOk = true
+                initAppService(ctx)
+            } else {
+                DataRequester.request("init", onFailure = { e ->
+                    XposedBridge.log("Shamrock: init handshake failed: ${e.message}")
+                    if (ShamrockConfig.isInit()) {
+                        ctx.toast("使用缓存配置启动")
+                        initAppService(ctx)
+                    } else {
+                        ctx.toast("请先打开 Shamrock App 保存设置，再重启 QQ")
+                    }
+                }, bodyBuilder = null) {
+                    isConfigOk = true
+                    ShamrockConfig.updateConfig(it)
                     initAppService(ctx)
                 }
-            }, bodyBuilder = null) {
-                isConfigOk = true
-                ShamrockConfig.updateConfig(it)
-                initAppService(ctx)
             }
         }
     }

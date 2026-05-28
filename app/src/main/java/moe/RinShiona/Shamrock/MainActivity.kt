@@ -105,6 +105,11 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        // Touch prefs so LSPosed XSharedPreferences file is fresh for QQ (MIUI-safe path).
+        getSharedPreferences("config", MODE_PRIVATE)
+            .edit()
+            .putLong("xqbot_sync", System.currentTimeMillis())
+            .apply()
         ShamrockConfig.pushUpdate(this)
         broadcastToModule { putExtra("__cmd", "checkAndStartService") }
     }
