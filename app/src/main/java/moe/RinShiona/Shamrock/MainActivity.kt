@@ -67,6 +67,7 @@ import kotlinx.coroutines.launch
 import moe.RinShiona.Shamrock.ui.app.AppRuntime
 import moe.RinShiona.Shamrock.ui.app.Logger
 import moe.RinShiona.Shamrock.ui.app.RuntimeState
+import moe.RinShiona.Shamrock.ui.app.ShamrockConfig
 import moe.RinShiona.Shamrock.ui.fragment.DashboardFragment
 import moe.RinShiona.Shamrock.ui.fragment.HomeFragment
 import moe.RinShiona.Shamrock.ui.fragment.LabFragment
@@ -96,6 +97,13 @@ class MainActivity : ComponentActivity() {
             WindowCompat.setDecorFitsSystemWindows(window, true)
             broadcastToModule { putExtra("__cmd", "fetchPort") }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // QQ 已运行时，主动推送配置并尝试拉起 HTTP 服务（避免只勾 LSPosed 却未握手成功）
+        ShamrockConfig.pushUpdate(this)
+        broadcastToModule { putExtra("__cmd", "checkAndStartService") }
     }
 }
 

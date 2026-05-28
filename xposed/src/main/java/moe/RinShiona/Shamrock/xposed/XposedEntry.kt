@@ -312,9 +312,9 @@ internal class XposedEntry: IXposedHookLoadPackage {
 
             sec_static_stage_inited = true
 
-            if (PlatformUtils.isTim()) {
-                MMKVFetcher.initMMKV(ctx)
-            }
+            // QQ/TIM 进程都需要 MMKV（配置读写）；TIM 必须显式 init，QQ 通常自带 MMKV。
+            kotlin.runCatching { MMKVFetcher.initMMKV(ctx) }
+                .onFailure { log("Shamrock: MMKV init skipped/failed: ${it.message}") }
 
             ActionLoader.runFirst(ctx)
         }

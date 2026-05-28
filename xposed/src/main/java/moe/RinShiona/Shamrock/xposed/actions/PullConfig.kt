@@ -15,9 +15,8 @@ import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
 import moe.RinShiona.Shamrock.xposed.helper.internal.IPCRequest
 import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.loader.NativeLoader
+import de.robv.android.xposed.XposedBridge
 import mqq.app.MobileQQ
-import kotlin.concurrent.thread
-import kotlin.system.exitProcess
 
 class PullConfig: IAction {
     companion object {
@@ -81,15 +80,12 @@ class PullConfig: IAction {
                 }
             })
 
-            DataRequester.request("init", onFailure = {
+            DataRequester.request("init", onFailure = { e ->
+                XposedBridge.log("Shamrock: init handshake failed: ${e.message}")
                 if (!ShamrockConfig.isInit()) {
-                    ctx.toast("请启动Shamrock主进程以初始化服务，进程将退出。")
-                    thread {
-                        Thread.sleep(3000)
-                        exitProcess(1)
-                    }
+                    ctx.toast("请先打开 Shamrock App，再完全退出并重启 QQ（不会杀进程）")
                 } else {
-                    ctx.toast("Shamrock进程未启动，不会推送配置文件。")
+                    ctx.toast("Shamrock App 未响应，使用缓存配置启动")
                     initAppService(ctx)
                 }
             }, bodyBuilder = null) {
