@@ -68,13 +68,8 @@ internal class XposedEntry: IXposedHookLoadPackage {
      * 这样无论用户用的是 9.1.x、9.2.85 还是 9.2.90 NT 都能正常启动。
      */
     private fun entryMQQ(classLoader: ClassLoader) {
-        // BEFORE any other Shamrock hook — QQ 9.2.90 ArtTiHookTask runs very early.
+        // Java bypass only — native bootstrap waits until Application context is ready.
         EarlyAntiDetection.install(classLoader)
-        kotlin.runCatching {
-            ShamrockNative.bootstrap()
-        }.onFailure {
-            log("Shamrock: early native bootstrap failed (non-fatal): ${it.message}")
-        }
 
         val startup = afterHook(51) { param ->
             try {

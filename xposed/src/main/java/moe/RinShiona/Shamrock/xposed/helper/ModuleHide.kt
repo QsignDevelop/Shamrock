@@ -15,13 +15,14 @@ internal object ModuleHide {
     /** Substrings matched against filesystem paths, maps lines, APK paths, etc. */
     val pathKeywords = listOf(
         PACKAGE,
-        "RinShiona",
-        "Shamrock",
+        "RinShiona/Shamrock",
+        "RinShiona.Shamrock",
         "shamrocknt",
         "libshamrock",
         "libshamrocknt",
         "xqbot.provider",
-        "/Tencent/Shamrock",
+        "/data/data/$PACKAGE",
+        "/data/user/0/$PACKAGE",
     )
 
     /** Class / log / stack-trace keywords — only hide from QSec callers, not from ourselves. */

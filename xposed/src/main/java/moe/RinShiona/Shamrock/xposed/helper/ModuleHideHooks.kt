@@ -2,11 +2,7 @@ package moe.RinShiona.Shamrock.xposed.helper
 
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
-import de.robv.android.xposed.XposedHelpers
 import java.io.File
-import java.io.FileInputStream
-import java.util.Collections
-import java.util.WeakHashMap
 
 /**
  * Java-layer hooks that scrub Shamrock fingerprints from QQ / Dtc scans.
@@ -15,8 +11,6 @@ import java.util.WeakHashMap
  */
 internal object ModuleHideHooks {
     private const val DTC = "com.tencent.mobileqq.dt.app.Dtc"
-    private val mapsStreams =
-        Collections.synchronizedSet(Collections.newSetFromMap(WeakHashMap<FileInputStream, Boolean>()))
 
     fun installEarly(classLoader: ClassLoader) {
         hookDtc(classLoader)
@@ -24,7 +18,8 @@ internal object ModuleHideHooks {
     }
 
     fun installMapsFilter() {
-        hookMapsReadFilter()
+        // Native openat/maps filter in libshamrocknt handles the hot path.
+        // Java partial-read filtering on /proc/self/maps can corrupt buffers → disabled.
     }
 
     private fun hookDtc(classLoader: ClassLoader) {
@@ -43,18 +38,25 @@ internal object ModuleHideHooks {
             }
         }
 
-        // getLibraryList(String), getPluginInfo(String), getNativeLibraryDir(), getPackageName()
+        // getLibraryList(String), getPluginInfo(String) — scrub module libs only
         listOf(
             "getLibraryList",
             "getPluginInfo",
-            "getNativeLibraryDir",
-            "getPackageName",
             "getPropSafe",
             "mmKVValue",
             "mmQsecKVValue",
             "systemGetSafe",
         ).forEach { method ->
             hookSanitizeStringReturn(dtc, method)
+        }
+
+        // getNativeLibraryDir(): only blank if it actually references our module
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "getNativeLibraryDir", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    param.result = ModuleHide.sanitizeValue(param.result as? String)
+                }
+            })
         }
 
         // mmkvQsecAllKeys(String) — comma-separated key list
@@ -131,52 +133,6 @@ internal object ModuleHideHooks {
         }
         listOf("exists", "canRead", "isFile", "isDirectory").forEach { name ->
             runCatching { XposedBridge.hookAllMethods(File::class.java, name, hook) }
-        }
-    }
-
-    private fun hookMapsReadFilter() {
-        runCatching {
-            XposedHelpers.findAndHookConstructor(
-                FileInputStream::class.java,
-                File::class.java,
-                object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val path = (param.args[0] as? File)?.absolutePath ?: return
-                        if (path.contains("/proc/") && path.contains("maps")) {
-                            mapsStreams.add(param.thisObject as FileInputStream)
-                        }
-                    }
-                }
-            )
-        }
-
-        val readHook = object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                val stream = param.thisObject as? FileInputStream ?: return
-                if (!mapsStreams.contains(stream)) return
-                val n = param.result as? Int ?: return
-                if (n <= 0) return
-                val buf = param.args[0] as? ByteArray ?: return
-                val off = param.args[1] as? Int ?: 0
-                val len = param.args[2] as? Int ?: n
-                val chunk = String(buf, off, minOf(len, n), Charsets.UTF_8)
-                val filtered = ModuleHide.filterSensitiveLines(chunk)
-                if (filtered.length == chunk.length) return
-                val out = filtered.toByteArray(Charsets.UTF_8)
-                System.arraycopy(out, 0, buf, off, minOf(out.size, len))
-                param.result = minOf(out.size, len)
-            }
-        }
-
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                FileInputStream::class.java,
-                "read",
-                ByteArray::class.java,
-                Int::class.javaPrimitiveType,
-                Int::class.javaPrimitiveType,
-                readHook
-            )
         }
     }
 }

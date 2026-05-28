@@ -18,11 +18,12 @@ import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 internal object EarlyAntiDetection {
     private val installed = AtomicBoolean(false)
 
-    private val SKIP_TASK_KEYWORDS = listOf(
-        "ArtTiHook", "ArtTi", "TiHook",
-        "GuardCheck", "CodeCheck", "HookCheck",
-        "SecurityScan", "EnvCheck", "XposedCheck",
-        "AntiHook", "AntiTamper"
+    private val SKIP_TASK_IDS = setOf(
+        "ArtTiHookTask",
+        "ArtTiHook",
+        "CodeCheckTask",
+        "GuardCheckTask",
+        "HookCheckTask",
     )
 
     fun install(classLoader: ClassLoader) {
@@ -30,8 +31,8 @@ internal object EarlyAntiDetection {
         log("installing early bypass (classLoader phase)")
 
         hookQSecDetectMethod(classLoader)
-        hookQSecExecTasks(classLoader)
-        hookNtTaskLifecycle(classLoader)
+        // Do NOT blanket-block QSec.execTasks — it runs required FEKit / business init.
+        hookNtTaskArtTiOnly(classLoader)
         hookSelfKillGuard()
         ModuleHideHooks.installEarly(classLoader)
     }
@@ -52,67 +53,49 @@ internal object EarlyAntiDetection {
         }.onFailure { log("QSec.detectMethod hook failed: ${it.message}") }
     }
 
-    private fun hookQSecExecTasks(classLoader: ClassLoader) {
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                "com.tencent.mobileqq.qsec.qsecurity.QSec",
-                classLoader,
-                "execTasks",
-                android.content.Context::class.java,
-                Int::class.javaPrimitiveType,
-                object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = 0
-                }
-            )
-            log("QSec.execTasks -> 0")
-        }.onFailure { log("QSec.execTasks hook failed: ${it.message}") }
-    }
-
-    private fun hookNtTaskLifecycle(classLoader: ClassLoader) {
+    private fun hookNtTaskArtTiOnly(classLoader: ClassLoader) {
         val skipHook = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val task = param.thisObject ?: return
                 val taskId = readTaskId(task) ?: return
                 if (shouldSkipTask(taskId)) {
-                    log("skip NT task: $taskId (${param.method.name})")
+                    log("skip NT anti-tamper task: $taskId")
                     param.result = null
                 }
             }
         }
 
-        listOf("onTaskStart", "onTaskFinish", "run").forEach { methodName ->
-            runCatching {
-                XposedHelpers.findAndHookMethod(
-                    "com.tencent.qqnt.startup.task.NtTask",
-                    classLoader,
-                    methodName,
-                    skipHook
-                )
-                log("NtTask.$methodName hooked")
-            }.onFailure {
-                // run() may not exist on abstract NtTask — ignore
-            }
-        }
+        // Only onTaskStart — do not touch run()/onTaskFinish or startup graph deadlocks.
+        runCatching {
+            XposedHelpers.findAndHookMethod(
+                "com.tencent.qqnt.startup.task.NtTask",
+                classLoader,
+                "onTaskStart",
+                skipHook
+            )
+            log("NtTask.onTaskStart hooked (ArtTiHook-only)")
+        }.onFailure { log("NtTask.onTaskStart hook failed: ${it.message}") }
 
-        // Legacy ColdStartupTask path (pre-NT / hybrid builds)
+        // ColdStartupTask enum — match constant name, not enum class name.
         runCatching {
             val coldTask = classLoader.loadClass(
                 "com.tencent.mobileqq.startup.task.config.ColdStartupTask"
             )
-            coldTask.declaredMethods
-                .filter { it.name.contains("run", ignoreCase = true) || it.name.contains("execute", ignoreCase = true) }
-                .forEach { method ->
-                    XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                        override fun beforeHookedMethod(param: MethodHookParam) {
-                            val name = param.thisObject?.javaClass?.simpleName ?: return
-                            if (shouldSkipTask(name)) {
-                                log("skip ColdStartupTask: $name")
+            coldTask.enumConstants?.forEach { constant ->
+                val name = constant?.javaClass?.simpleName ?: return@forEach
+                if (!shouldSkipTask(name)) return@forEach
+                constant.javaClass.declaredMethods
+                    .filter { it.name == "onTaskStart" || it.name == "run" }
+                    .forEach { method ->
+                        XposedBridge.hookMethod(method, object : XC_MethodHook() {
+                            override fun beforeHookedMethod(param: MethodHookParam) {
+                                log("skip ColdStartupTask.$name.${method.name}")
                                 param.result = null
                             }
-                        }
-                    })
-                }
-            log("ColdStartupTask hooks installed")
+                        })
+                    }
+            }
+            log("ColdStartupTask anti-tamper hooks installed")
         }.onFailure { log("ColdStartupTask not present: ${it.message}") }
     }
 
@@ -123,7 +106,11 @@ internal object EarlyAntiDetection {
     }
 
     private fun shouldSkipTask(id: String): Boolean {
-        return SKIP_TASK_KEYWORDS.any { id.contains(it, ignoreCase = true) }
+        if (SKIP_TASK_IDS.any { id.equals(it, ignoreCase = true) }) return true
+        // Obfuscated builds may embed these tokens inside taskId strings.
+        return id.contains("ArtTiHook", ignoreCase = true) ||
+            id.contains("CodeCheck", ignoreCase = true) ||
+            (id.contains("GuardCheck", ignoreCase = true) && !id.contains("GuardInit", ignoreCase = true))
     }
 
     /** Block QSec-triggered suicide while keeping normal exits elsewhere. */
