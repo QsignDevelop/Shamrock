@@ -1,39 +1,23 @@
 package moe.RinShiona.Shamrock.xposed.ipc.impl
 
+import android.content.Context
+import android.os.Build
 import de.robv.android.xposed.XposedBridge
+import java.io.File
+import java.util.zip.ZipFile
 
 /**
- * Kotlin <-> native bridge for libshamrock.so.
+ * Kotlin <-> native bridge for libshamrocknt.so.
  *
- * Architecture
- * ============
- * Shamrock now layers two hook engines:
- *
- *  1. **Java-level Xposed hooks** (XposedHelpers / XposedBridge) handle the
- *     framework-level checks (PackageManager, SystemProperties, File.exists,
- *     etc.). See `AntiDetection.kt`.
- *
- *  2. **Native inline hooks** (ShadowHook, this file's `nativeInit()`)
- *     handle the hot-path security probes that QQ runs from inside its own
- *     libfekit.so / libQSec.so:
- *       - /proc/self/maps reads via fopen / openat
- *       - dlopen() of libxposed_* / libsandhook / libsubstrate
- *       - readlink() of /proc/self/exe (mask Shamrock APK path)
- *
- * The native side also exposes `nativeGetSign()` — a direct call into
- * QQ's native sign function, bypassing the Java-level
- * QQSecuritySign.getSign trampoline that the anti-hook scanner watches.
- *
- * Loading
- * =======
- * Called once, as early as possible during process startup, from
- * `XposedEntry.execStartupInit`. Failure to load (e.g. on x86_64 emulator
- * without prebuilt shadowhook) is non-fatal — we fall through to the
- * Java-only hook path.
+ * LSPosed loads module code via LspModuleClassLoader; on some ROMs
+ * System.loadLibrary("shamrocknt") cannot see libs inside the module APK.
+ * We fall back to explicit paths / zip extraction (same pattern as NativeLoader).
  */
 internal object ShamrockNative {
 
-    /** Whether System.loadLibrary("shamrock") succeeded. */
+    private const val LIB_NAME = "shamrocknt"
+
+    /** Whether libshamrocknt.so was loaded successfully. */
     @JvmStatic
     var libraryLoaded: Boolean = false
         private set
@@ -43,31 +27,12 @@ internal object ShamrockNative {
     var initialized: Boolean = false
         private set
 
-    /**
-     * Load and initialize the native subsystem.
-     *
-     * Safe to call multiple times — only the first invocation does work,
-     * subsequent calls are no-ops.
-     */
     @Synchronized
-    fun bootstrap(): Boolean {
+    fun bootstrap(hostCtx: Context? = null): Boolean {
         if (initialized) return true
         if (!libraryLoaded) {
-            try {
-                // Library name "shamrocknt" must match CMakeLists.txt
-                // project("shamrocknt") in xposed/src/main/cpp/.
-                // The app/ module ships its own libshamrock.so for utility
-                // functions (MD5, silk, CQ codec); ours is separate.
-                System.loadLibrary("shamrocknt")
-                libraryLoaded = true
-                XposedBridge.log("[ShamrockNative] libshamrocknt.so loaded")
-            } catch (e: UnsatisfiedLinkError) {
-                XposedBridge.log("[ShamrockNative] libshamrocknt.so load failed: ${e.message}")
-                return false
-            } catch (e: Throwable) {
-                XposedBridge.log("[ShamrockNative] unexpected load error: ${e.javaClass.simpleName}: ${e.message}")
-                return false
-            }
+            libraryLoaded = loadNativeLibrary(hostCtx)
+            if (!libraryLoaded) return false
         }
         return try {
             initialized = nativeInit()
@@ -79,10 +44,88 @@ internal object ShamrockNative {
         }
     }
 
-    /**
-     * Fetch a diagnostic status string from the native side. Useful for
-     * debugging via the /shamrock/status HTTP endpoint.
-     */
+    private fun loadNativeLibrary(hostCtx: Context?): Boolean {
+        try {
+            System.loadLibrary(LIB_NAME)
+            XposedBridge.log("[ShamrockNative] libshamrocknt.so loaded via loadLibrary")
+            return true
+        } catch (e: UnsatisfiedLinkError) {
+            XposedBridge.log("[ShamrockNative] loadLibrary failed: ${e.message}")
+        }
+
+        val ctx = hostCtx ?: kotlin.runCatching {
+            Class.forName("mqq.app.MobileQQ")
+                .getMethod("getContext")
+                .invoke(null) as Context
+        }.getOrNull()
+
+        if (ctx != null) {
+            kotlin.runCatching {
+                val ai = ctx.packageManager.getApplicationInfo("moe.RinShiona.Shamrock", 0)
+                val fromNativeDir = File(ai.nativeLibraryDir, "lib$LIB_NAME.so")
+                if (fromNativeDir.exists()) {
+                    System.load(fromNativeDir.absolutePath)
+                    XposedBridge.log("[ShamrockNative] loaded from nativeLibraryDir: $fromNativeDir")
+                    return true
+                }
+                if (extractAndLoad(ai.sourceDir, ctx)) return true
+            }.onFailure {
+                XposedBridge.log("[ShamrockNative] ApplicationInfo load failed: ${it.message}")
+            }
+        }
+
+        resolveModuleApkPath()?.let { apk ->
+            if (extractAndLoad(apk, ctx)) return true
+        }
+
+        XposedBridge.log("[ShamrockNative] all load paths failed for lib$LIB_NAME.so")
+        return false
+    }
+
+    private fun resolveModuleApkPath(): String? {
+        val cl = ShamrockNative::class.java.classLoader ?: return null
+        for (fieldName in listOf("apk", "modulePath", "moduleApkPath")) {
+            kotlin.runCatching {
+                val field = cl.javaClass.getDeclaredField(fieldName)
+                field.isAccessible = true
+                (field.get(cl) as? String)?.takeIf { it.endsWith(".apk") }?.let { return it }
+            }
+        }
+        Regex("module=([^,\\]]+)").find(cl.toString())?.groupValues?.get(1)?.trim()?.let {
+            if (it.endsWith(".apk")) return it
+        }
+        return null
+    }
+
+    private fun extractAndLoad(apkPath: String, hostCtx: Context?): Boolean {
+        return kotlin.runCatching {
+            ZipFile(apkPath).use { zip ->
+                val abi = Build.SUPPORTED_ABIS.firstOrNull { candidate ->
+                    zip.getEntry("lib/$candidate/lib$LIB_NAME.so") != null
+                } ?: return false
+                val entryName = "lib/$abi/lib$LIB_NAME.so"
+                val cacheRoot = hostCtx?.cacheDir
+                    ?: File("/data/data/com.tencent.mobileqq/cache")
+                val out = File(cacheRoot, "shamrocknt/lib$LIB_NAME.so").apply {
+                    parentFile?.mkdirs()
+                }
+                if (!out.exists() || out.length() <= 0L) {
+                    zip.getInputStream(zip.getEntry(entryName)!!).use { input ->
+                        out.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    out.setReadable(true, false)
+                    out.setExecutable(true, false)
+                }
+                System.load(out.absolutePath)
+                XposedBridge.log("[ShamrockNative] loaded from extracted $out (apk=$apkPath)")
+                true
+            }
+        }.getOrElse {
+            XposedBridge.log("[ShamrockNative] extractAndLoad failed: ${it.message}")
+            false
+        }
+    }
+
     fun status(): String {
         if (!libraryLoaded) return "library not loaded"
         return try {
@@ -92,15 +135,6 @@ internal object ShamrockNative {
         }
     }
 
-    /**
-     * Native fast-path getSign. Returns a SignResult object as produced by
-     * QQ's own libfekit.so getSign function — NOT a Shamrock synthesis.
-     *
-     * Returns null if the native fast path is unavailable (e.g. the library
-     * isn't loaded, or QQ hasn't yet bound the native method). In that case
-     * the caller should fall back to reflective FEKit.getSign in
-     * `QSignerImpl`.
-     */
     fun getSign(
         qua: String,
         cmd: String,
@@ -127,11 +161,18 @@ internal object ShamrockNative {
         }
     }
 
-    // ---------- JNI declarations ----------
-    // Resolved by libshamrock.so:JNI_OnLoad via RegisterNatives. The
-    // signatures here MUST match shamrock_native.cpp:kNativeMethods.
+    fun onLibFeKitLoaded() {
+        if (!libraryLoaded) return
+        runCatching {
+            nativeOnLibFeKitLoaded()
+            XposedBridge.log("[ShamrockNative] libfekit probe hooks refreshed")
+        }.onFailure {
+            XposedBridge.log("[ShamrockNative] onLibFeKitLoaded failed: ${it.message}")
+        }
+    }
 
     @JvmStatic external fun nativeInit(): Boolean
+    @JvmStatic external fun nativeOnLibFeKitLoaded()
     @JvmStatic external fun nativeCheckStatus(): String
 
     @JvmStatic external fun nativeGetSign(

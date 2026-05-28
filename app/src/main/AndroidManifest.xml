@@ -24,6 +24,7 @@
         android:label="@string/app_name"
         android:supportsRtl="true"
         android:theme="@style/Theme.Shamrock"
+        android:extractNativeLibs="true"
         android:zygotePreloadName="@string/app_name"
         tools:targetApi="31">
         <activity

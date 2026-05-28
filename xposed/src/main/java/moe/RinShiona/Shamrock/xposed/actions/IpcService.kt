@@ -41,6 +41,10 @@ internal class IpcService: IAction {
             LogCenter.log("Failed to register IByteData: ${it.message}", Level.ERROR)
         }
 
+        // Push binders to main process proactively (MIUI may delay fetch_ipc round-trip).
+        pushBinderToMain(ctx, ShamrockIpc.IPC_QSIGN)
+        pushBinderToMain(ctx, ShamrockIpc.IPC_BYTEDATA)
+
         DynamicReceiver.register("fetch_ipc", IPCRequest {
             val name = it.getStringExtra("ipc_name") ?: return@IPCRequest
             LogCenter.log("IPC FETCH => $name (verify this isn't leaking your API)")
@@ -56,5 +60,18 @@ internal class IpcService: IAction {
                 } ?: LogCenter.log("IPC name not registered: $name", Level.WARN)
             }
         })
+    }
+
+    private fun pushBinderToMain(ctx: Context, name: String) {
+        ShamrockIpc.get(name)?.let { binder ->
+            ctx.broadcast("xqbot") {
+                putExtra("__cmd", "ipc_callback")
+                putExtra("ipc", Bundle().also {
+                    it.putString("name", name)
+                    it.putBinder("binder", binder)
+                })
+            }
+            LogCenter.log("IPC pushed to main: $name", Level.INFO)
+        }
     }
 }

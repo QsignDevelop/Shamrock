@@ -28,26 +28,34 @@ internal object PlatformUtils {
      * 是否处于QQ MSF协议进程
      */
     fun isMsfProcess(): Boolean {
-        return MobileQQ.getMobileQQ().qqProcessName.contains("msf", ignoreCase = true)
+        return kotlin.runCatching {
+            MobileQQ.getMobileQQ().qqProcessName.contains("msf", ignoreCase = true)
+        }.getOrDefault(false)
     }
 
     /**
      * 是否处于QQ主进程
      */
     fun isMainProcess(): Boolean {
-        return isMqq() || isTim()
+        return kotlin.runCatching { isMqq() || isTim() }.getOrDefault(false)
     }
 
     fun isMqq(): Boolean {
-        return MobileQQ.getMobileQQ().qqProcessName == "com.tencent.mobileqq"
+        return kotlin.runCatching {
+            MobileQQ.getMobileQQ().qqProcessName == "com.tencent.mobileqq"
+        }.getOrDefault(false)
     }
 
     fun isMqqPackage(): Boolean {
-        return MobileQQ.getMobileQQ().qqProcessName.startsWith("com.tencent.mobileqq")
+        return kotlin.runCatching {
+            MobileQQ.getMobileQQ().qqProcessName.startsWith("com.tencent.mobileqq")
+        }.getOrDefault(false)
     }
 
     fun isTim(): Boolean {
-        return MobileQQ.getMobileQQ().qqProcessName == "com.tencent.tim"
+        return kotlin.runCatching {
+            MobileQQ.getMobileQQ().qqProcessName == "com.tencent.tim"
+        }.getOrDefault(false)
     }
 
     fun getDeviceBattery(): DeviceBattery {

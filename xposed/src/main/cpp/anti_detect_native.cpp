@@ -55,7 +55,8 @@ namespace {
 constexpr const char *kBlocklistMapsSubstrings[] = {
     "xposed", "Xposed", "XPOSED",
     "lsposed", "LSPosed", "LSPOSED",
-    "lspd",
+    "lspd", "liblspd",
+    "libriru", "riru",
     "moe.RinShiona.Shamrock",
     "RinShiona",
     "shamrock", "Shamrock",
@@ -63,10 +64,29 @@ constexpr const char *kBlocklistMapsSubstrings[] = {
     "libshamrocknt",
     "magisk", "Magisk",
     "zygisk", "Zygisk",
+    "frida", "Frida",
+    "hookvip", "simpleHook",
     "/data/adb/modules",
     "/data/adb/lspd",
+    "/data/misc/lspd",
+    "anon:dalvik-DEX",
+    "dalvik-DEX",
+    "gdb-server",
+    "LspModuleClassLoader",
+    "InMemoryDexClassLoader",
+    "de.robv.android.xposed",
+    "org.lsposed",
     nullptr,
 };
+
+static bool is_sensitive_proc_path(const char *pathname) {
+    if (pathname == nullptr) return false;
+    if (std::strstr(pathname, "/proc/") == nullptr) return false;
+    return std::strstr(pathname, "/maps") != nullptr ||
+           std::strstr(pathname, "/mountinfo") != nullptr ||
+           std::strstr(pathname, "/smaps") != nullptr ||
+           std::strstr(pathname, "/cmdline") != nullptr;
+}
 
 bool line_should_drop(const char *line) {
     for (int i = 0; kBlocklistMapsSubstrings[i] != nullptr; i++) {
@@ -134,15 +154,12 @@ void    *g_fopen_stub = nullptr;
 FILE *my_fopen(const char *pathname, const char *mode) {
     if (g_orig_fopen == nullptr) return nullptr;
 
-    // Only intercept reads of /proc/self/maps or /proc/<pid>/maps
-    if (pathname == nullptr || !std::strstr(pathname, "/maps")) {
-        return g_orig_fopen(pathname, mode);
-    }
-    if (!std::strstr(pathname, "/proc/")) {
+    // Intercept reads of /proc/self/{maps,mountinfo,smaps,cmdline}
+    if (pathname == nullptr || !is_sensitive_proc_path(pathname)) {
         return g_orig_fopen(pathname, mode);
     }
 
-    // Read the real maps into a buffer, filter, write to a memfd, return.
+    // Read the real proc file into a buffer, filter sensitive lines, return fake FILE*.
     FILE *real = g_orig_fopen(pathname, mode);
     if (real == nullptr) return nullptr;
 
@@ -221,8 +238,7 @@ int my_openat(int dirfd, const char *pathname, int flags, ...) {
 
     if (g_orig_openat == nullptr) return -1;
 
-    if (pathname != nullptr && std::strstr(pathname, "/proc/") &&
-        std::strstr(pathname, "/maps")) {
+    if (pathname != nullptr && is_sensitive_proc_path(pathname)) {
         // Open real, read content, write filtered to memfd, return memfd.
         int real_fd = g_orig_openat(dirfd, pathname, flags, mode);
         if (real_fd < 0) return real_fd;

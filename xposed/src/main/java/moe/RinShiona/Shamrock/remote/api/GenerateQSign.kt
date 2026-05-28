@@ -38,6 +38,7 @@ import moe.RinShiona.Shamrock.tools.json
 import moe.RinShiona.Shamrock.tools.respond
 import moe.RinShiona.Shamrock.tools.toHexString
 import moe.RinShiona.Shamrock.utils.PlatformUtils
+import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
 import moe.RinShiona.Shamrock.xposed.ipc.ShamrockIpc
 import moe.RinShiona.Shamrock.xposed.ipc.bytedata.IByteData
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
@@ -396,7 +397,8 @@ private suspend inline fun PipelineContext<Unit, ApplicationCall>.fetchSalt(
 
 private suspend fun initSigner(): Boolean {
     if (!isMsfServiceAlive()) return false
-    val binder = ShamrockIpc.get(ShamrockIpc.IPC_QSIGN) ?: return false
+    val existing = ShamrockIpc.get(ShamrockIpc.IPC_QSIGN)
+    val binder = existing ?: IpcFetcher.fetch(ShamrockIpc.IPC_QSIGN) ?: return false
     signer = IQSigner.Stub.asInterface(binder)
     binder.linkToDeath({ signer = null }, 0)
     return true
@@ -404,7 +406,8 @@ private suspend fun initSigner(): Boolean {
 
 private suspend fun initByteData(): Boolean {
     if (byteData != null && byteData?.asBinder()?.isBinderAlive == true) return true
-    val binder = ShamrockIpc.get(ShamrockIpc.IPC_BYTEDATA) ?: return false
+    val existing = ShamrockIpc.get(ShamrockIpc.IPC_BYTEDATA)
+    val binder = existing ?: IpcFetcher.fetch(ShamrockIpc.IPC_BYTEDATA) ?: return false
     byteData = IByteData.Stub.asInterface(binder)
     binder.linkToDeath({ byteData = null }, 0)
     return true

@@ -6,10 +6,12 @@ import android.content.Context
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.GlobalScope
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import moe.RinShiona.Shamrock.remote.HTTPServer
 import moe.RinShiona.Shamrock.remote.service.config.ShamrockConfig
 import moe.RinShiona.Shamrock.utils.PlatformUtils
+import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
 import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.xposed.helper.internal.DataRequester
 import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
@@ -18,11 +20,13 @@ import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.loader.NativeLoader
 import de.robv.android.xposed.XposedBridge
 import mqq.app.MobileQQ
+import java.util.concurrent.atomic.AtomicBoolean
 
 class PullConfig: IAction {
     companion object {
         @JvmStatic
         var isConfigOk = false
+        private val serviceBootstrapped = AtomicBoolean(false)
     }
 
     private external fun testNativeLibrary(): String
@@ -85,31 +89,51 @@ class PullConfig: IAction {
                 }
             })
 
-            // HyperOS/MIUI blocks App->QQ broadcast; read LSPosed-shared prefs first.
+            loadConfigAndStart(ctx)
+        }
+    }
+
+    private suspend fun loadConfigAndStart(ctx: Context) {
+        // HyperOS/MIUI blocks App->QQ broadcast; poll LSPosed-shared prefs.
+        repeat(30) { attempt ->
+            if (serviceBootstrapped.get()) return
             if (XPrefConfigLoader.loadIfAvailable()) {
                 isConfigOk = true
                 initAppService(ctx)
-            } else {
+                return
+            }
+            if (ShamrockConfig.isInit()) {
+                ctx.toast("使用缓存配置启动")
+                isConfigOk = true
+                initAppService(ctx)
+                return
+            }
+            if (attempt == 0) {
                 DataRequester.request("init", onFailure = { e ->
                     XposedBridge.log("Shamrock: init handshake failed: ${e.message}")
-                    if (ShamrockConfig.isInit()) {
-                        ctx.toast("使用缓存配置启动")
-                        initAppService(ctx)
-                    } else {
-                        ctx.toast("请先打开 Shamrock App 保存设置，再重启 QQ")
-                    }
                 }, bodyBuilder = null) {
                     isConfigOk = true
                     ShamrockConfig.updateConfig(it)
                     initAppService(ctx)
                 }
             }
+            XposedBridge.log("Shamrock: waiting for Shamrock App config (attempt ${attempt + 1}/30)")
+            delay(2000)
+        }
+        XposedBridge.log("Shamrock: config load retries exhausted — starting with cached/default config")
+        if (!serviceBootstrapped.get()) {
+            isConfigOk = true
+            initAppService(ctx)
         }
     }
 
     private fun initAppService(ctx: Context) {
+        if (!serviceBootstrapped.compareAndSet(false, true)) return
         NativeLoader.load("shamrock")
         ctx.toast(testNativeLibrary())
         ActionLoader.runService(ctx)
+        GlobalScope.launch(Dispatchers.Default) {
+            IpcFetcher.prefetchAll()
+        }
     }
 }

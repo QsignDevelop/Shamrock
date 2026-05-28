@@ -27,13 +27,13 @@ object ActionLoader {
 
     // 先从APP拉取配置文件，再执行其他操作
     fun runFirst(ctx: Context) {
-        kotlin.runCatching {
-            ACTION_FIRST_LIST.forEach {
-                val action = it.createInstance()
-                action.invoke(ctx)
+        ACTION_FIRST_LIST.forEach { actionClass ->
+            kotlin.runCatching {
+                actionClass.createInstance().invoke(ctx)
+            }.onFailure {
+                XposedBridge.log("Shamrock: action ${actionClass.simpleName} failed: $it")
+                XposedBridge.log(it)
             }
-        }.onFailure {
-            XposedBridge.log(it)
         }
     }
 

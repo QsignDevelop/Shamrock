@@ -10,6 +10,13 @@ internal object ModuleHide {
     val packageNames = listOf(
         PACKAGE,
         "moe.RinShiona.Shamrock.xposed",
+        // Legacy / common hook companion apps on CN ROMs
+        "moe.fuqiuluo.shamrock",
+        "top.hookvip.pro",
+        "me.simpleHook",
+        "de.robv.android.xposed.installer",
+        "org.lsposed.manager",
+        "org.lsposed.lspatch",
     )
 
     /** Substrings matched against filesystem paths, maps lines, APK paths, etc. */
@@ -17,12 +24,31 @@ internal object ModuleHide {
         PACKAGE,
         "RinShiona/Shamrock",
         "RinShiona.Shamrock",
+        "fuqiuluo/shamrock",
         "shamrocknt",
         "libshamrock",
         "libshamrocknt",
         "xqbot.provider",
         "/data/data/$PACKAGE",
         "/data/user/0/$PACKAGE",
+        "/data/adb/lspd",
+        "/data/adb/modules",
+        "/data/misc/lspd",
+        "/data/misc/riru",
+        "modules.list",
+        "libriru",
+        "liblspd",
+        "libzygisk",
+        "hookvip",
+        "simpleHook",
+        // libfekit smaps scanner (9.2.90)
+        "anon:dalvik-DEX",
+        "dalvik-DEX",
+        "gdb-server",
+        "LspModuleClassLoader",
+        "InMemoryDexClassLoader",
+        "de.robv.android.xposed",
+        "org.lsposed",
     )
 
     /** Class / log / stack-trace keywords — only hide from QSec callers, not from ourselves. */
@@ -31,6 +57,10 @@ internal object ModuleHide {
         "RinShiona.Shamrock",
         "Shamrock.xposed",
         "libshamrocknt",
+        "XposedBridge",
+        "de.robv.android.xposed",
+        "org.lsposed",
+        "LspModuleClassLoader",
     )
 
     fun matchesPath(path: String?): Boolean {
@@ -74,9 +104,16 @@ internal object ModuleHide {
                 (cn.contains("qsec", ignoreCase = true) ||
                     cn.contains("qsecurity", ignoreCase = true) ||
                     cn.contains(".dt.", ignoreCase = true) ||
-                    cn.contains("mobileqq.fe", ignoreCase = true))) ||
+                    cn.contains("mobileqq.fe", ignoreCase = true) ||
+                    cn.contains("qmethod", ignoreCase = true) ||
+                    cn.contains("pandoraex", ignoreCase = true) ||
+                    cn.contains("privacy", ignoreCase = true) ||
+                    cn.contains("PackageInstallMonitor", ignoreCase = true) ||
+                    cn.contains("DexMonitor", ignoreCase = true))) ||
                 cn.contains("ArtTiHook", ignoreCase = true) ||
-                cn.contains("GuardCheck", ignoreCase = true)
+                cn.contains("GuardCheck", ignoreCase = true) ||
+                cn.contains("GuardManager", ignoreCase = true) ||
+                cn.contains("CodeCheck", ignoreCase = true)
         }
     }
 }

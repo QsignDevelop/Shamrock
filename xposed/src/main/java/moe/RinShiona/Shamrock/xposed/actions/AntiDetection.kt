@@ -10,6 +10,8 @@ import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
+import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
+import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import mqq.app.MobileQQ
 import java.io.BufferedReader
@@ -76,6 +78,9 @@ internal class AntiDetection : IAction {
             "com.topjohnwu.magisk",
             "com.ryandev.hidesu",
             "com.tutuapp.tutuhelper",
+            "top.hookvip.pro",
+            "me.simpleHook",
+            "moe.fuqiuluo.shamrock",
         ) + ModuleHide.packageNames
 
         private val DANGEROUS_PATHS = listOf(
@@ -119,7 +124,12 @@ internal class AntiDetection : IAction {
         // Each phase is independent. We deliberately try all of them even
         // if some fail ? anti-detection is layered.
         runPhase("CoreDetection", ::hookCoreDetection)
-        runPhase("ModuleHide", { ModuleHideHooks.installMapsFilter() })
+        runPhase("QQ9290PrivacyLayer", ::hookQQ9290PrivacyLayer)
+        runPhase("ModuleHide", {
+            val loader = ctx.classLoader ?: MobileQQ.getContext()?.classLoader
+            if (loader != null) ModuleHideHooks.installEarly(loader)
+            ModuleHideHooks.installMapsFilter()
+        })
         if (AntiDetectionConfig.hideFiles)       runPhase("FileDetection",    ::hookFileDetection)
         if (AntiDetectionConfig.hideProps)       runPhase("SystemProperties", ::hookSystemProperties)
         if (AntiDetectionConfig.hideProc || AntiDetectionConfig.hideNative)
@@ -132,8 +142,7 @@ internal class AntiDetection : IAction {
         if (AntiDetectionConfig.hideNetwork)     runPhase("NetworkDetection", ::hookNetworkDetection)
         if (AntiDetectionConfig.hideLSPosed)     runPhase("LSPosedHide",      ::hookLSPosedSpecific)
 
-        // NEW for 9.2.90: bypass ArtTiHookTask + QSec.detectMethod
-        // (EarlyAntiDetection already installed at loadPackage; this is backup)
+        // Backup QSec.detectMethod + Build.TAGS only — do not skip NtTask (breaks startup).
         runPhase("ArtTiHookBypass", { hookArtTiHookBypass(ctx) })
 
         log("AntiDetection initialization complete")
@@ -152,6 +161,18 @@ internal class AntiDetection : IAction {
         if (AntiDetectionConfig.debugLog) {
             XposedBridge.log("[$TAG] $msg")
         }
+    }
+
+    /** PackageInstallMonitorKt + DexMonitor + StackTrace — backup if EarlyAntiDetection missed. */
+    private fun hookQQ9290PrivacyLayer() {
+        val loader = try {
+            MobileQQ.getContext()?.classLoader
+        } catch (_: Throwable) {
+            null
+        } ?: return
+        PackageInstallMonitorHooks.install(loader)
+        PandoraHideHooks.install(loader)
+        StackTraceHideHooks.install()
     }
 
     // ============ Phase 1: Core (Class.forName / loadClass filtering) ============
@@ -365,7 +386,7 @@ internal class AntiDetection : IAction {
             }
         })
 
-        // getInstalledApplications ? same idea
+        // getInstalledApplications — same idea
         XposedBridge.hookAllMethods(pmIface, "getInstalledApplications", object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val list = param.result as? List<*> ?: return
@@ -380,6 +401,21 @@ internal class AntiDetection : IAction {
                 if (filtered.size != list.size) {
                     param.result = filtered
                 }
+            }
+        })
+
+        XposedBridge.hookAllMethods(pmIface, "queryIntentActivities", object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                val list = param.result as? List<*> ?: return
+                val filtered = list.filter { item ->
+                    val pkg = try {
+                        val ai = item?.javaClass?.getField("activityInfo")?.get(item) ?: return@filter true
+                        ai.javaClass.getField("packageName").get(ai) as? String
+                    } catch (_: Throwable) { null }
+                    pkg == null || (!ModuleHide.matchesPackage(pkg) &&
+                        DANGEROUS_APPS.none { pkg == it || pkg.contains(it) })
+                }
+                if (filtered.size != list.size) param.result = filtered
             }
         })
     }
@@ -597,34 +633,7 @@ internal class AntiDetection : IAction {
             log("QSec.detectMethod bypass FAILED: ${e.message}")
         }
 
-        // 2. ArtTiHookTask onTaskStart() ? short-circuit it
-        //    9.2.90 has ColdStartupTask.ArtTiHookTask as one of the enum values that
-        //    schedules an NtTask which scans ArtMethods. We can't reliably get the
-        //    NtTask subclass name (it's obfuscated), so we hook NtTask.onTaskStart()
-        //    and bail when taskId contains "ArtTiHook" or "GuardCheck".
-        try {
-            val ntTaskClass = qqLoader.loadClass("com.tencent.qqnt.startup.task.NtTask")
-            val onTaskStart = ntTaskClass.getDeclaredMethod("onTaskStart")
-            XposedBridge.hookMethod(onTaskStart, object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    val task = param.thisObject ?: return
-                    val taskId = try {
-                        ntTaskClass.getMethod("getTaskId").invoke(task) as? String
-                    } catch (_: Throwable) { null } ?: return
-                    if (taskId.contains("ArtTiHook", ignoreCase = true) ||
-                        taskId.contains("GuardCheck", ignoreCase = true) ||
-                        taskId.contains("CodeCheck", ignoreCase = true)) {
-                        log("Skipping NT task: $taskId")
-                        param.result = null   // skip the original
-                    }
-                }
-            })
-            log("NT ArtTiHookTask / GuardCheck / CodeCheck task bypass installed")
-        } catch (e: Throwable) {
-            log("NT task bypass FAILED (older QQ?): ${e.message}")
-        }
-
-        // 3. Build.TAGS / Build.FINGERPRINT ? avoid "test-keys" tripping checks
+        // Build.TAGS / Build.FINGERPRINT — avoid "test-keys" tripping checks
         try {
             // Build is read at process start, so this only helps if QQ reads it lazily.
             val current = Build.TAGS ?: ""

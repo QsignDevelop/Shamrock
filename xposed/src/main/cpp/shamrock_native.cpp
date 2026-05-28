@@ -27,6 +27,7 @@ extern "C" {
     // Initialization (called once from nativeInit).
     int  shamrock_sign_init(JNIEnv *env);
     int  shamrock_anti_detect_init(JNIEnv *env);
+    void shamrock_anti_detect_on_libfekit_loaded();
     int  shamrock_hide_init(JNIEnv *env);
 
     // JNI bridge for sign extraction.
@@ -93,6 +94,10 @@ jbyteArray JNICALL native_energy(
     return shamrock_invoke_native_energy(env, data, salt);
 }
 
+void JNICALL native_on_libfekit_loaded(JNIEnv * /*env*/, jclass /*self*/) {
+    shamrock_anti_detect_on_libfekit_loaded();
+}
+
 constexpr const char *kNativeClass =
     "moe/RinShiona/Shamrock/xposed/ipc/impl/ShamrockNative";
 
@@ -108,6 +113,8 @@ const JNINativeMethod kNativeMethods[] = {
     {"nativeEnergy",
      "(Ljava/lang/String;[B)[B",
      reinterpret_cast<void *>(native_energy)},
+    {"nativeOnLibFeKitLoaded", "()V",
+     reinterpret_cast<void *>(native_on_libfekit_loaded)},
 };
 
 } // namespace

@@ -12,6 +12,7 @@ import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import moe.RinShiona.Shamrock.utils.PlatformUtils
+import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
 import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
 import mqq.app.MobileQQ
 
@@ -33,6 +34,7 @@ internal class DataReceiver: IAction {
         }
 
         if (PlatformUtils.isMainProcess()) {
+            IpcFetcher.initMainProcess()
             GlobalUi = Handler(ctx.mainLooper)
             GlobalScope.launch {
                 val intentFilter = IntentFilter()

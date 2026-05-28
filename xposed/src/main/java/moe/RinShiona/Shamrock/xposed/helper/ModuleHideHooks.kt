@@ -13,7 +13,13 @@ internal object ModuleHideHooks {
     private const val DTC = "com.tencent.mobileqq.dt.app.Dtc"
 
     fun installEarly(classLoader: ClassLoader) {
+        installFileHideOnly()
         hookDtc(classLoader)
+        hookContentProviderQueries()
+    }
+
+    /** File hiding only — safe before Application context exists. */
+    fun installFileHideOnly() {
         hookSensitivePaths()
     }
 
@@ -46,8 +52,43 @@ internal object ModuleHideHooks {
             "mmKVValue",
             "mmQsecKVValue",
             "systemGetSafe",
+            "dtcProcessCall",
         ).forEach { method ->
             hookSanitizeStringReturn(dtc, method)
+        }
+
+        // dtcBL(byte[]) -> String[] blacklist from QSec channel
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "dtcBL", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    when (val r = param.result) {
+                        is Array<*> -> param.result = r.filter { item ->
+                            item !is String || !ModuleHide.lineContainsSensitive(item)
+                        }.toTypedArray()
+                        is String -> param.result = ModuleHide.sanitizeValue(r) ?: r
+                    }
+                }
+            })
+        }
+
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "isAbnormalConfig", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = false
+                }
+            })
+        }
+
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "mmQsecKVValueBytes", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val bytes = param.result as? ByteArray ?: return
+                    val text = runCatching { String(bytes) }.getOrNull() ?: return
+                    if (ModuleHide.lineContainsSensitive(text)) {
+                        param.result = ByteArray(0)
+                    }
+                }
+            })
         }
 
         // getNativeLibraryDir(): only blank if it actually references our module
@@ -116,6 +157,32 @@ internal object ModuleHideHooks {
                                 item !is String || !ModuleHide.lineContainsSensitive(item)
                             }.toTypedArray()
                         }
+                    }
+                }
+            })
+        }
+    }
+
+    /** Hide Shamrock ContentProvider from QSec package/content scans. */
+    private fun hookContentProviderQueries() {
+        runCatching {
+            val cr = Class.forName("android.content.ContentResolver")
+            XposedBridge.hookAllMethods(cr, "query", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
+                    val uri = param.args.getOrNull(0) ?: return
+                    val uriStr = uri.toString()
+                    if (ModuleHide.lineContainsSensitive(uriStr)) {
+                        param.result = null
+                    }
+                }
+            })
+            XposedBridge.hookAllMethods(cr, "call", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
+                    val uri = param.args.getOrNull(0) ?: return
+                    if (ModuleHide.lineContainsSensitive(uri.toString())) {
+                        param.result = null
                     }
                 }
             })

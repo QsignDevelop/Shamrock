@@ -6,35 +6,67 @@ import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
+import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
+import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
+import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 
 /**
- * Critical QQ 9.2.90 NT anti-tamper bypasses — MUST run before any other
- * Shamrock hook or NtTask (especially ArtTiHookTask) executes.
+ * Critical QQ 9.2.90 NT anti-tamper bypasses — MUST run before other Shamrock hooks.
  *
- * Installed from [moe.RinShiona.Shamrock.xposed.XposedEntry.entryMQQ] with
- * only a ClassLoader; no Application context required.
+ * Strategy: QSec.detectMethod=false + Dtc/Pandora hide + early native maps filter.
+ * Do NOT skip NtTask startup tasks (causes QQ white-screen on HyperOS).
  */
 internal object EarlyAntiDetection {
     private val installed = AtomicBoolean(false)
-
-    private val SKIP_TASK_IDS = setOf(
-        "ArtTiHookTask",
-        "ArtTiHook",
-        "CodeCheckTask",
-        "GuardCheckTask",
-        "HookCheckTask",
-    )
 
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
         log("installing early bypass (classLoader phase)")
 
         hookQSecDetectMethod(classLoader)
-        // Do NOT blanket-block QSec.execTasks — it runs required FEKit / business init.
-        hookNtTaskArtTiOnly(classLoader)
-        hookSelfKillGuard()
+        hookDtcEarly(classLoader)
+        PandoraHideHooks.install(classLoader)
+        PackageInstallMonitorHooks.install(classLoader)
+        StackTraceHideHooks.install()
+        // Full Dtc + file hide BEFORE ArtTiHookTask / GuardInitTask (AntiDetection runs too late).
         ModuleHideHooks.installEarly(classLoader)
+        hookLibFeKitLoad()
+        hookSelfKillGuard()
+    }
+
+    /** Dtc probes run during cold startup — must hook here, not in AntiDetection action. */
+    private fun hookDtcEarly(classLoader: ClassLoader) {
+        val dtc = runCatching { classLoader.loadClass("com.tencent.mobileqq.dt.app.Dtc") }.getOrNull()
+            ?: return
+        runCatching {
+            XposedHelpers.findAndHookMethod(
+                dtc, "isAbnormalConfig",
+                object : XC_MethodReplacement() {
+                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
+                }
+            )
+            log("Dtc.isAbnormalConfig -> false")
+        }
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "checkAppInstalled", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    val pkg = param.args.firstOrNull() as? String ?: return
+                    if (ModuleHide.matchesPackage(pkg)) param.result = false
+                }
+            })
+        }
+        listOf("getAccessibilityEnabledServiceList", "getAccessibilityServiceList").forEach { method ->
+            runCatching {
+                XposedBridge.hookAllMethods(dtc, method, object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val raw = param.result as? String ?: return
+                        param.result = ModuleHide.filterSensitiveLines(raw)
+                    }
+                })
+            }
+        }
     }
 
     private fun hookQSecDetectMethod(classLoader: ClassLoader) {
@@ -53,64 +85,40 @@ internal object EarlyAntiDetection {
         }.onFailure { log("QSec.detectMethod hook failed: ${it.message}") }
     }
 
-    private fun hookNtTaskArtTiOnly(classLoader: ClassLoader) {
-        val skipHook = object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                val task = param.thisObject ?: return
-                val taskId = readTaskId(task) ?: return
-                if (shouldSkipTask(taskId)) {
-                    log("skip NT anti-tamper task: $taskId")
-                    param.result = null
-                }
-            }
-        }
-
-        // Only onTaskStart — do not touch run()/onTaskFinish or startup graph deadlocks.
+    /** Re-install libfekit probe hooks right after QQ loads libfekit.so. */
+    private fun hookLibFeKitLoad() {
         runCatching {
             XposedHelpers.findAndHookMethod(
-                "com.tencent.qqnt.startup.task.NtTask",
-                classLoader,
-                "onTaskStart",
-                skipHook
-            )
-            log("NtTask.onTaskStart hooked (ArtTiHook-only)")
-        }.onFailure { log("NtTask.onTaskStart hook failed: ${it.message}") }
-
-        // ColdStartupTask enum — match constant name, not enum class name.
-        runCatching {
-            val coldTask = classLoader.loadClass(
-                "com.tencent.mobileqq.startup.task.config.ColdStartupTask"
-            )
-            coldTask.enumConstants?.forEach { constant ->
-                val name = constant?.javaClass?.simpleName ?: return@forEach
-                if (!shouldSkipTask(name)) return@forEach
-                constant.javaClass.declaredMethods
-                    .filter { it.name == "onTaskStart" || it.name == "run" }
-                    .forEach { method ->
-                        XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                            override fun beforeHookedMethod(param: MethodHookParam) {
-                                log("skip ColdStartupTask.$name.${method.name}")
-                                param.result = null
-                            }
-                        })
+                System::class.java,
+                "loadLibrary",
+                String::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val name = param.args.getOrNull(0) as? String ?: return
+                        if (name.contains("fekit", ignoreCase = true)) {
+                            ShamrockNative.onLibFeKitLoaded()
+                            log("libfekit loaded — probe hooks refreshed")
+                        }
                     }
-            }
-            log("ColdStartupTask anti-tamper hooks installed")
-        }.onFailure { log("ColdStartupTask not present: ${it.message}") }
-    }
-
-    private fun readTaskId(task: Any): String? {
-        return runCatching {
-            task.javaClass.getMethod("getTaskId").invoke(task) as? String
-        }.getOrNull() ?: task.javaClass.simpleName
-    }
-
-    private fun shouldSkipTask(id: String): Boolean {
-        if (SKIP_TASK_IDS.any { id.equals(it, ignoreCase = true) }) return true
-        // Obfuscated builds may embed these tokens inside taskId strings.
-        return id.contains("ArtTiHook", ignoreCase = true) ||
-            id.contains("CodeCheck", ignoreCase = true) ||
-            (id.contains("GuardCheck", ignoreCase = true) && !id.contains("GuardInit", ignoreCase = true))
+                }
+            )
+        }
+        runCatching {
+            XposedHelpers.findAndHookMethod(
+                System::class.java,
+                "load",
+                String::class.java,
+                object : XC_MethodHook() {
+                    override fun afterHookedMethod(param: MethodHookParam) {
+                        val path = param.args.getOrNull(0) as? String ?: return
+                        if (path.contains("libfekit", ignoreCase = true)) {
+                            ShamrockNative.onLibFeKitLoaded()
+                            log("libfekit loaded (path) — probe hooks refreshed")
+                        }
+                    }
+                }
+            )
+        }
     }
 
     /** Block QSec-triggered suicide while keeping normal exits elsewhere. */
