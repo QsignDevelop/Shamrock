@@ -23,17 +23,24 @@ internal object EarlyAntiDetection {
 
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
-        log("installing early bypass (classLoader phase)")
+        val proc = currentProcessName()
+        val isMain = proc == "com.tencent.mobileqq" || !proc.contains(':')
+        log("installing early bypass (proc=$proc main=$isMain)")
 
         hookQSecDetectMethod(classLoader)
         hookDtcEarly(classLoader)
-        PandoraHideHooks.install(classLoader)
-        PackageInstallMonitorHooks.install(classLoader)
-        StackTraceHideHooks.install()
-        // Full Dtc + file hide BEFORE ArtTiHookTask / GuardInitTask (AntiDetection runs too late).
-        ModuleHideHooks.installEarly(classLoader)
-        hookLibFeKitLoad()
-        KillGuardHooks.install(classLoader)
+        if (isMain) {
+            PandoraHideHooks.install(classLoader)
+            PackageInstallMonitorHooks.install(classLoader)
+            StackTraceHideHooks.install()
+            // Full Dtc + file hide BEFORE ArtTiHookTask / GuardInitTask (AntiDetection runs too late).
+            ModuleHideHooks.installEarly(classLoader)
+            hookLibFeKitLoad()
+            KillGuardHooks.install(classLoader)
+        } else {
+            // Keep non-main process hooks minimal to avoid affecting QQ startup libs.
+            ModuleHideHooks.installFileHideOnly()
+        }
     }
 
     /** Dtc probes run during cold startup — must hook here, not in AntiDetection action. */
@@ -123,5 +130,13 @@ internal object EarlyAntiDetection {
 
     private fun log(msg: String) {
         XposedBridge.log("[EarlyAntiDetection] $msg")
+    }
+
+    private fun currentProcessName(): String {
+        return runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentProcessName")
+                .invoke(null) as String
+        }.getOrElse { "?" }
     }
 }

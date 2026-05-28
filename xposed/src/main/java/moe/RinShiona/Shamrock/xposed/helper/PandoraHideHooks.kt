@@ -73,17 +73,6 @@ internal object PandoraHideHooks {
         cls.declaredMethods.forEach { method ->
             runCatching {
                 XposedBridge.hookMethod(method, object : XC_MethodHook() {
-                    override fun beforeHookedMethod(param: MethodHookParam) {
-                        val sensitive = param.args.any { arg ->
-                            arg is String && ModuleHide.lineContainsSensitive(arg)
-                        }
-                        if (!sensitive) return
-                        when (method.name) {
-                            "loadLibrary" -> param.throwable = UnsatisfiedLinkError("blocked")
-                            "load", "dexClassLoader" -> param.result = null
-                        }
-                    }
-
                     override fun afterHookedMethod(param: MethodHookParam) {
                         when (val r = param.result) {
                             is String -> param.result = ModuleHide.sanitizeValue(r) ?: r
