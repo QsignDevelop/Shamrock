@@ -1,16 +1,15 @@
 package moe.RinShiona.Shamrock.xposed.actions
 
 import de.robv.android.xposed.XC_MethodHook
-import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
-import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
 import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
+import moe.RinShiona.Shamrock.xposed.helper.QQ9290DetectionHooks
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 
 /**
@@ -32,11 +31,12 @@ internal object EarlyAntiDetection {
         val isMain = proc == "com.tencent.mobileqq" || !proc.contains(':')
         log("installing early bypass (proc=$proc main=$isMain)")
 
-        if (AntiDetectionConfig.hideSignature || AntiDetectionConfig.hideTrace) {
-            hookQSecDetectMethod(classLoader)
-        }
-        if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideFiles || AntiDetectionConfig.hideProps) {
-            hookDtcEarly(classLoader)
+        // APK-verified Dtc / QSec / RuntimeMonitor hooks (9.2.90_rev scan).
+        if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideFiles ||
+            AntiDetectionConfig.hideProps || AntiDetectionConfig.hideSignature ||
+            AntiDetectionConfig.hideTrace || AntiDetectionConfig.hideProc
+        ) {
+            QQ9290DetectionHooks.install(classLoader)
         }
         if (isMain) {
             installMainProcessHooks(classLoader)
@@ -70,55 +70,6 @@ internal object EarlyAntiDetection {
         if (AntiDetectionConfig.hideFiles) {
             ModuleHideHooks.installFileHideOnly()
         }
-    }
-
-    /** Dtc probes run during cold startup — must hook here, not in AntiDetection action. */
-    private fun hookDtcEarly(classLoader: ClassLoader) {
-        val dtc = runCatching { classLoader.loadClass("com.tencent.mobileqq.dt.app.Dtc") }.getOrNull()
-            ?: return
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                dtc, "isAbnormalConfig",
-                object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
-                }
-            )
-            log("Dtc.isAbnormalConfig -> false")
-        }
-        runCatching {
-            XposedBridge.hookAllMethods(dtc, "checkAppInstalled", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    val pkg = param.args.firstOrNull() as? String ?: return
-                    if (ModuleHide.matchesPackage(pkg)) param.result = false
-                }
-            })
-        }
-        listOf("getAccessibilityEnabledServiceList", "getAccessibilityServiceList").forEach { method ->
-            runCatching {
-                XposedBridge.hookAllMethods(dtc, method, object : XC_MethodHook() {
-                    override fun afterHookedMethod(param: MethodHookParam) {
-                        val raw = param.result as? String ?: return
-                        param.result = ModuleHide.filterSensitiveLines(raw)
-                    }
-                })
-            }
-        }
-    }
-
-    private fun hookQSecDetectMethod(classLoader: ClassLoader) {
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                "com.tencent.mobileqq.qsec.qsecurity.QSec",
-                classLoader,
-                "detectMethod",
-                String::class.java,
-                String::class.java,
-                object : XC_MethodReplacement() {
-                    override fun replaceHookedMethod(param: MethodHookParam): Any = false
-                }
-            )
-            log("QSec.detectMethod -> false")
-        }.onFailure { log("QSec.detectMethod hook failed: ${it.message}") }
     }
 
     /** Re-install libfekit probe hooks right after QQ loads libfekit.so. */

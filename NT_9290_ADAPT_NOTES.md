@@ -404,3 +404,20 @@ val result = getSign4.invoke(feKit, cmd, buffer, seq, uin) as SignResult
 
 ### Anti-Xposed 探针 hook
 9.2.90 在 `Lcom/tencent/mobileqq/qsec/qsecurity/QSec;` 的 `detectMethod(String, String)` 会主动扫某些 Java 方法。Shamrock 应该 hook 这个返回 false。
+
+---
+
+## 17. 9.2.90 检测链逆向摘要（detection_scan.txt）
+
+| 层级 | 类 / 任务 | APK 验证的方法 | Shamrock 处理 |
+|------|-----------|----------------|---------------|
+| 启动 | `ColdStartupTask.ArtTiHookTask` | 枚举名，实现在 libfekit | `offsets_9290` 探针 stub + fopen/openat maps 过滤 |
+| Java | `Dtc` | `checkAppInstalled`, `dtcBL`, `getLibraryList`, `mmQsecKV*` | `QQ9290DetectionHooks` |
+| Java | `QSec` | `detectMethod`, `getXpsInfo`, `doReport` | `QQ9290DetectionHooks` |
+| Pandora | `InstalledAppListMonitor` | `getPackageInfo`, `getInstalledPackages`, … | `PandoraHideHooks` |
+| Pandora | `DexMonitor` | `loadLibrary`, `load`, `dexClassLoader` | `PandoraHideHooks`（仅清洗返回值） |
+| Pandora | `RuntimeMonitor` | `exec(Runtime, String)` 等 | `QQ9290DetectionHooks` |
+| 隐私 | `PackageInstallMonitorKt` | `a`..`g(Context, String, …)` | `PackageInstallMonitorHooks` |
+| 进程 | `app.guard.GuardManager` | `exit()` | `KillGuardHooks` |
+
+重新扫描：`python rev_9290_detection.py` → `9.2.90_rev/detection_scan.txt`
