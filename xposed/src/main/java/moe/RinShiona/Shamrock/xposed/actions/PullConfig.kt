@@ -57,6 +57,7 @@ class PullConfig: IAction {
                 // 同步反检测配置
                 moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.apply {
                     enabled = it.getBooleanExtra("anti_detection_enabled", true)
+                    earlyEnabled = it.getBooleanExtra("anti_early_enabled", enabled)
                     hideXposed = it.getBooleanExtra("anti_hide_xposed", true)
                     hideRoot = it.getBooleanExtra("anti_hide_root", true)
                     hideMagisk = it.getBooleanExtra("anti_hide_magisk", true)

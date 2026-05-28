@@ -71,6 +71,7 @@ internal object XPrefConfigLoader {
     private fun applyAntiDetection(prefs: XSharedPreferences) {
         AntiDetectionConfig.apply {
             enabled = prefs.getBoolean("anti_detection_enabled", true)
+            earlyEnabled = prefs.getBoolean("anti_early_enabled", enabled)
             hideXposed = prefs.getBoolean("anti_hide_xposed", true)
             hideRoot = prefs.getBoolean("anti_hide_root", true)
             hideMagisk = prefs.getBoolean("anti_hide_magisk", true)

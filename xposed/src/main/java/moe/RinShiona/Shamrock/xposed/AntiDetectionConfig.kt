@@ -18,6 +18,8 @@ object AntiDetectionConfig {
     // ====== 主开关 ======
     /** 总开关，false则全部禁用 */
     var enabled = true
+    /** 早期反检测开关（EarlyAntiDetection）。默认跟随 enabled。 */
+    var earlyEnabled = true
     
     // ====== Xposed检测防护 =====
     /** 隐藏Xposed模块存在性 */
@@ -115,6 +117,7 @@ object AntiDetectionConfig {
      */
     fun resetToDefaults() {
         enabled = true
+        earlyEnabled = true
         hideXposed = true
         hideLSPosed = true
         hideClassLoader = true
@@ -151,6 +154,7 @@ object AntiDetectionConfig {
         return buildString {
             appendLine("=== AntiDetection Config ===")
             appendLine("Enabled: $enabled")
+            appendLine("Early Enabled: $earlyEnabled")
             appendLine("Xposed Hide: $hideXposed")
             appendLine("LSPosed Hide: $hideLSPosed")
             appendLine("Root Hide: $hideRoot")
@@ -167,4 +171,10 @@ object AntiDetectionConfig {
             appendLine("Debug Log: $debugLog")
         }
     }
+
+    /**
+     * 是否允许安装 EarlyAntiDetection。
+     * 关闭总开关时始终禁用；早期开关单独可控，便于排查库加载误伤。
+     */
+    fun allowEarlyHooks(): Boolean = enabled && earlyEnabled
 }

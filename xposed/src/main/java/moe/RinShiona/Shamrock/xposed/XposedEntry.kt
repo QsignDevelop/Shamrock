@@ -118,7 +118,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }.onFailure {
             plog("early native bootstrap failed (non-fatal): ${it.message}")
         }
-        if (AntiDetectionConfig.enabled) {
+        if (AntiDetectionConfig.allowEarlyHooks()) {
             EarlyAntiDetection.install(classLoader)
         } else {
             plog("early anti-detection disabled by config")

@@ -5,6 +5,7 @@ import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
+import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
@@ -22,23 +23,51 @@ internal object EarlyAntiDetection {
     private val installed = AtomicBoolean(false)
 
     fun install(classLoader: ClassLoader) {
+        if (!AntiDetectionConfig.allowEarlyHooks()) {
+            log("skip install: disabled by config")
+            return
+        }
         if (!installed.compareAndSet(false, true)) return
         val proc = currentProcessName()
         val isMain = proc == "com.tencent.mobileqq" || !proc.contains(':')
         log("installing early bypass (proc=$proc main=$isMain)")
 
-        hookQSecDetectMethod(classLoader)
-        hookDtcEarly(classLoader)
+        if (AntiDetectionConfig.hideSignature || AntiDetectionConfig.hideTrace) {
+            hookQSecDetectMethod(classLoader)
+        }
+        if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideFiles || AntiDetectionConfig.hideProps) {
+            hookDtcEarly(classLoader)
+        }
         if (isMain) {
+            installMainProcessHooks(classLoader)
+        } else {
+            installNonMainProcessHooks()
+        }
+    }
+
+    private fun installMainProcessHooks(classLoader: ClassLoader) {
+        if (AntiDetectionConfig.hideApk || AntiDetectionConfig.hideSignature) {
             PandoraHideHooks.install(classLoader)
             PackageInstallMonitorHooks.install(classLoader)
+        }
+        if (AntiDetectionConfig.hideTrace) {
             StackTraceHideHooks.install()
+        }
+        if (AntiDetectionConfig.hideFiles || AntiDetectionConfig.hideProc || AntiDetectionConfig.hideNative) {
             // Full Dtc + file hide BEFORE ArtTiHookTask / GuardInitTask (AntiDetection runs too late).
             ModuleHideHooks.installEarly(classLoader)
+        }
+        if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideSignature) {
             hookLibFeKitLoad()
+        }
+        if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideTrace) {
             KillGuardHooks.install(classLoader)
-        } else {
-            // Keep non-main process hooks minimal to avoid affecting QQ startup libs.
+        }
+    }
+
+    private fun installNonMainProcessHooks() {
+        // Keep non-main process hooks minimal to avoid affecting QQ startup libs.
+        if (AntiDetectionConfig.hideFiles) {
             ModuleHideHooks.installFileHideOnly()
         }
     }
