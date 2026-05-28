@@ -365,12 +365,102 @@ void install_probe_hooks() {
 
 #endif // SHAMROCK_HAS_SHADOWHOOK
 
+#if SHAMROCK_HAS_SHADOWHOOK
+
+using exit_fn = void (*)(int);
+exit_fn g_orig_exit = nullptr;
+void *g_exit_stub = nullptr;
+
+using kill_fn = int (*)(int, int);
+kill_fn g_orig_kill = nullptr;
+void *g_kill_stub = nullptr;
+
+bool address_in_module(void *addr, const char *lib_substr) {
+    if (addr == nullptr) return false;
+    FILE *fp = ::fopen("/proc/self/maps", "r");
+    if (fp == nullptr) return false;
+    char line[1024];
+    bool found = false;
+    auto target = reinterpret_cast<uintptr_t>(addr);
+    while (::fgets(line, sizeof(line), fp) != nullptr) {
+        if (std::strstr(line, lib_substr) == nullptr) continue;
+        uintptr_t start = 0, end = 0;
+        if (std::sscanf(line, "%lx-%lx", &start, &end) == 2) {
+            if (target >= start && target < end) {
+                found = true;
+                break;
+            }
+        }
+    }
+    ::fclose(fp);
+    return found;
+}
+
+bool security_lib_caller(void *ret_addr) {
+    return address_in_module(ret_addr, "libfekit.so") ||
+           address_in_module(ret_addr, "libQSec.so") ||
+           address_in_module(ret_addr, "libqsec.so");
+}
+
+void my_exit(int status) {
+    void *caller = __builtin_return_address(0);
+    if (security_lib_caller(caller)) {
+        LOGW("blocked exit(%d) caller=%p (security lib)", status, caller);
+        return;
+    }
+    if (g_orig_exit != nullptr) {
+        g_orig_exit(status);
+    }
+}
+
+int my_kill(int pid, int sig) {
+    if (pid == ::getpid() || pid == 0) {
+        void *caller = __builtin_return_address(0);
+        if (security_lib_caller(caller)) {
+            LOGW("blocked kill(%d,%d) caller=%p (security lib)", pid, sig, caller);
+            return 0;
+        }
+    }
+    return g_orig_kill != nullptr ? g_orig_kill(pid, sig) : -1;
+}
+
+void install_exit_kill_hooks() {
+    g_exit_stub = shadowhook_hook_sym_name(
+        "libc.so", "exit",
+        reinterpret_cast<void *>(&my_exit),
+        reinterpret_cast<void **>(&g_orig_exit)
+    );
+    if (g_exit_stub == nullptr) {
+        LOGE("exit hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
+    } else {
+        LOGI("exit hook installed");
+    }
+
+    g_kill_stub = shadowhook_hook_sym_name(
+        "libc.so", "kill",
+        reinterpret_cast<void *>(&my_kill),
+        reinterpret_cast<void **>(&g_orig_kill)
+    );
+    if (g_kill_stub == nullptr) {
+        LOGE("kill hook FAILED: %s", shadowhook_to_errmsg(shadowhook_get_errno()));
+    } else {
+        LOGI("kill hook installed");
+    }
+}
+
+#endif // SHAMROCK_HAS_SHADOWHOOK
+
 extern "C" int shamrock_anti_detect_init(JNIEnv * /*env*/) {
+    static std::atomic<bool> g_anti_inited{false};
+    if (g_anti_inited.exchange(true)) {
+        return 0;
+    }
     LOGI("anti_detect_init: starting");
 
 #if SHAMROCK_HAS_SHADOWHOOK
     install_fopen_hook();
     install_openat_hook();
+    install_exit_kill_hooks();
     // libfekit.so probe hooks. May fail this early if the .so isn't mapped
     // yet — we silently retry from sign_native.cpp once libfekit.so loads.
     install_probe_hooks();

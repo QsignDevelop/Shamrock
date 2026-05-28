@@ -1,11 +1,11 @@
 package moe.RinShiona.Shamrock.xposed.actions
 
-import android.os.Process
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XC_MethodReplacement
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
+import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
@@ -33,7 +33,7 @@ internal object EarlyAntiDetection {
         // Full Dtc + file hide BEFORE ArtTiHookTask / GuardInitTask (AntiDetection runs too late).
         ModuleHideHooks.installEarly(classLoader)
         hookLibFeKitLoad()
-        hookSelfKillGuard()
+        KillGuardHooks.install(classLoader)
     }
 
     /** Dtc probes run during cold startup — must hook here, not in AntiDetection action. */
@@ -118,65 +118,6 @@ internal object EarlyAntiDetection {
                     }
                 }
             )
-        }
-    }
-
-    /** Block QSec-triggered suicide while keeping normal exits elsewhere. */
-    private fun hookSelfKillGuard() {
-        val exitGuard = object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                if (!isQSecKill()) return
-                log("blocked self-terminate via ${param.method.declaringClass.simpleName}.${param.method.name}")
-                param.result = null
-            }
-        }
-
-        val killGuard = object : XC_MethodHook() {
-            override fun beforeHookedMethod(param: MethodHookParam) {
-                val pid = param.args.getOrNull(0) as? Int ?: return
-                if (pid != Process.myPid()) return
-                if (!isQSecKill()) return
-                log("blocked Process.killProcess($pid) from QSec stack")
-                param.result = null
-            }
-        }
-
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                Process::class.java,
-                "killProcess",
-                Int::class.javaPrimitiveType,
-                killGuard
-            )
-        }
-
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                System::class.java,
-                "exit",
-                Int::class.javaPrimitiveType,
-                exitGuard
-            )
-        }
-
-        runCatching {
-            XposedHelpers.findAndHookMethod(
-                Runtime::class.java,
-                "exit",
-                Int::class.javaPrimitiveType,
-                exitGuard
-            )
-        }
-    }
-
-    private fun isQSecKill(): Boolean {
-        return Thread.currentThread().stackTrace.any { frame ->
-            val cn = frame.className
-            cn.contains("qsec", ignoreCase = true) ||
-                cn.contains("qsecurity", ignoreCase = true) ||
-                cn.contains("ArtTiHook", ignoreCase = true) ||
-                cn.contains("GuardCheck", ignoreCase = true) ||
-                cn.contains("libfekit", ignoreCase = true)
         }
     }
 

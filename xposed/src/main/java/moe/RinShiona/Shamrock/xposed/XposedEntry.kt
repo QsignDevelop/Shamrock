@@ -80,12 +80,13 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — installing startup hooks")
-        EarlyAntiDetection.install(classLoader)
         kotlin.runCatching {
             ShamrockNative.bootstrap()
         }.onFailure {
             plog("early native bootstrap failed (non-fatal): ${it.message}")
         }
+        EarlyAntiDetection.install(classLoader)
+        tryHookAttachBaseContext(classLoader)
 
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
@@ -252,6 +253,24 @@ internal class XposedEntry: IXposedHookLoadPackage {
     }
 
     // ============ Tier 2: 9.2.90 NT 主路径 ============
+    /** Earliest Application hook — retry native load with Context. */
+    private fun tryHookAttachBaseContext(classLoader: ClassLoader) {
+        runCatching {
+            val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
+            val attach = baseApp.getDeclaredMethod("attachBaseContext", Context::class.java)
+            XposedBridge.hookMethod(attach, object : de.robv.android.xposed.XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val ctx = param.args.getOrNull(0) as? Context ?: return
+                    ShamrockNative.bootstrap(ctx)
+                    plog("native bootstrap retried from attachBaseContext")
+                }
+            })
+            plog("hooked BaseApplicationImpl.attachBaseContext (early native retry)")
+        }.onFailure {
+            plog("attachBaseContext early hook skipped: ${it.message}")
+        }
+    }
+
     private fun tryHookBaseApplicationOnCreate(classLoader: ClassLoader, hook: de.robv.android.xposed.XC_MethodHook): Boolean {
         return try {
             val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
