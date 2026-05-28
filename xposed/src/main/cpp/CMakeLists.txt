@@ -80,8 +80,11 @@ endif()
 # ---------------------------------------------------------------------------
 # System libraries
 # ---------------------------------------------------------------------------
+# NOTE: do NOT link libandroid — when this .so is dlopen'd inside QQ via the
+# LSPosed module classloader, the com_android_art namespace cannot resolve
+# libandroid.so and the load fails. We only use <android/log.h> which is
+# served by liblog.so.
 target_link_libraries(${CMAKE_PROJECT_NAME}
-    android
     log
     dl
 )

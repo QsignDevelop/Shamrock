@@ -194,13 +194,19 @@ internal object ModuleHideHooks {
         }
     }
 
-    /** Minimal file hiding before AntiDetection Action runs. */
+    /**
+     * Hide Shamrock files from QQ scanners (Dtc / QSec / Pandora) only.
+     * Do NOT touch File.exists() globally — that breaks our own native loader
+     * which must stat /data/app/<shamrock>/lib/<abi>/lib*.so.
+     */
     private fun hookSensitivePaths() {
         val hook = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
                 val file = param.thisObject as? File ?: return
                 val path = runCatching { file.absolutePath }.getOrNull() ?: return
-                if (ModuleHide.matchesPath(path)) param.result = false
+                if (!ModuleHide.matchesPath(path)) return
+                if (!ModuleHide.isSecurityScannerCaller()) return
+                param.result = false
             }
         }
         listOf("exists", "canRead", "isFile", "isDirectory").forEach { name ->

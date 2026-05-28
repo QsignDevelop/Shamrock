@@ -43,12 +43,23 @@ extern "C" {
 }
 
 namespace {
-
 std::atomic<bool> g_initialized{false};
+} // namespace
 
-// --------- JNI native methods registered on ShamrockNative class ----------
+// =====================================================================
+// JNI methods exported by symbol name (no RegisterNatives required).
+//
+// We previously used JNI_OnLoad + RegisterNatives, but inside QQ the
+// `ShamrockNative` Class instance reachable from FindClass (which queries
+// the system ClassLoader at OnLoad time) does NOT match the class loaded
+// via LSPosed's module ClassLoader, so the lookup table never applied to
+// Kotlin's runtime calls. Plain symbol export sidesteps the issue.
+// =====================================================================
 
-jboolean JNICALL native_init(JNIEnv *env, jclass /*self*/) {
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+jboolean JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeInit(
+        JNIEnv *env, jclass /*self*/) {
     if (g_initialized.exchange(true)) {
         LOGI("nativeInit: already initialized — noop");
         return JNI_TRUE;
@@ -63,7 +74,10 @@ jboolean JNICALL native_init(JNIEnv *env, jclass /*self*/) {
     return (rc1 == 0 && rc2 == 0 && rc3 == 0) ? JNI_TRUE : JNI_FALSE;
 }
 
-jstring JNICALL native_check_status(JNIEnv *env, jclass /*self*/) {
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+jstring JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeCheckStatus(
+        JNIEnv *env, jclass /*self*/) {
     char buf[1024];
     std::snprintf(buf, sizeof(buf),
         "Shamrock native: initialized=%s; ",
@@ -73,7 +87,9 @@ jstring JNICALL native_check_status(JNIEnv *env, jclass /*self*/) {
     return env->NewStringUTF(buf);
 }
 
-jobject JNICALL native_get_sign(
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+jobject JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeGetSign(
         JNIEnv *env, jclass /*self*/,
         jstring qua, jstring cmd,
         jbyteArray buffer, jbyteArray seq_bytes, jstring uin) {
@@ -84,7 +100,9 @@ jobject JNICALL native_get_sign(
     return shamrock_invoke_native_getSign(env, qua, cmd, buffer, seq_bytes, uin);
 }
 
-jbyteArray JNICALL native_energy(
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+jbyteArray JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeEnergy(
         JNIEnv *env, jclass /*self*/,
         jstring data, jbyteArray salt) {
     if (!g_initialized.load()) {
@@ -94,63 +112,15 @@ jbyteArray JNICALL native_energy(
     return shamrock_invoke_native_energy(env, data, salt);
 }
 
-void JNICALL native_on_libfekit_loaded(JNIEnv * /*env*/, jclass /*self*/) {
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+void JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeOnLibFeKitLoaded(
+        JNIEnv * /*env*/, jclass /*self*/) {
     shamrock_anti_detect_on_libfekit_loaded();
 }
 
-constexpr const char *kNativeClass =
-    "moe/RinShiona/Shamrock/xposed/ipc/impl/ShamrockNative";
-
-const JNINativeMethod kNativeMethods[] = {
-    {"nativeInit",        "()Z",
-     reinterpret_cast<void *>(native_init)},
-    {"nativeCheckStatus", "()Ljava/lang/String;",
-     reinterpret_cast<void *>(native_check_status)},
-    {"nativeGetSign",
-     "(Ljava/lang/String;Ljava/lang/String;[B[BLjava/lang/String;)"
-     "Ljava/lang/Object;",
-     reinterpret_cast<void *>(native_get_sign)},
-    {"nativeEnergy",
-     "(Ljava/lang/String;[B)[B",
-     reinterpret_cast<void *>(native_energy)},
-    {"nativeOnLibFeKitLoaded", "()V",
-     reinterpret_cast<void *>(native_on_libfekit_loaded)},
-};
-
-} // namespace
-
-// =====================================================================
-// JNI_OnLoad — registers native methods with the JVM.
-// =====================================================================
-
 extern "C" __attribute__((visibility("default")))
-jint JNI_OnLoad(JavaVM *vm, void * /*reserved*/) {
-    JNIEnv *env = nullptr;
-    if (vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) != JNI_OK) {
-        LOGE("JNI_OnLoad: GetEnv failed");
-        return JNI_ERR;
-    }
-
-    jclass cls = env->FindClass(kNativeClass);
-    if (cls == nullptr) {
-        env->ExceptionClear();
-        LOGE("JNI_OnLoad: cannot find class %s", kNativeClass);
-        return JNI_ERR;
-    }
-
-    if (env->RegisterNatives(cls, kNativeMethods,
-                              sizeof(kNativeMethods) / sizeof(kNativeMethods[0])) != JNI_OK) {
-        LOGE("JNI_OnLoad: RegisterNatives failed");
-        env->ExceptionClear();
-        env->DeleteLocalRef(cls);
-        return JNI_ERR;
-    }
-    env->DeleteLocalRef(cls);
-
-    // Anti-detect hooks are installed from nativeInit() after shadowhook_init().
-
-    LOGI("JNI_OnLoad: registered %zu native methods on %s",
-         sizeof(kNativeMethods) / sizeof(kNativeMethods[0]), kNativeClass);
-
+jint JNI_OnLoad(JavaVM * /*vm*/, void * /*reserved*/) {
+    LOGI("JNI_OnLoad: symbol-name binding (no RegisterNatives)");
     return JNI_VERSION_1_6;
 }

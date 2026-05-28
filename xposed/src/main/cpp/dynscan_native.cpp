@@ -169,36 +169,28 @@ jint hook_register_natives(JNIEnv *env, jclass clazz,
     return g_orig_register_natives(env, clazz, methods, n_methods);
 }
 
-bool patch_jni_register_natives(JNIEnv *env) {
-    if (g_table_patched.exchange(true)) return g_orig_register_natives != nullptr;
-
-    void **table = *reinterpret_cast<void ***>(env);
-    if (table == nullptr) {
-        LOGE("JNIEnv function table is null");
-        g_table_patched.store(false);
-        return false;
-    }
-
-    // RegisterNatives index for Android JNI 1.6+
-    constexpr int kRegisterNativesIndex = 215;
-    g_orig_register_natives =
-        reinterpret_cast<RegisterNatives_t>(table[kRegisterNativesIndex]);
-    if (g_orig_register_natives == nullptr) {
-        LOGE("RegisterNatives slot is null");
-        g_table_patched.store(false);
-        return false;
-    }
-
-    table[kRegisterNativesIndex] = reinterpret_cast<void *>(hook_register_natives);
-    LOGI("JNIEnv->RegisterNatives hooked via function table");
-    return true;
+/**
+ * Patching the JNIEnv vtable directly was the last-resort fallback, but on
+ * Android 13/14 the table memory is mapped read-only and any write triggers
+ * SIGSEGV which then bubbles into QQ's CrashDefend signal handler and tears
+ * down the whole process. Disabled — if the libart symbol hook fails we just
+ * degrade to Java-reflection sign (still functional, just no native fast-path).
+ */
+bool patch_jni_register_natives(JNIEnv * /*env*/) {
+    LOGW("JNIEnv table patch disabled (read-only on Android 13+)");
+    g_table_patched.store(true);
+    return false;
 }
 
 #if SHAMROCK_HAS_SHADOWHOOK
 bool hook_art_register_natives() {
+    // libart mangled names across Android versions (10..14).
     static const char *kSymbols[] = {
         "_ZN3art3JNI15RegisterNativesEP7_JNIEnvP7_jclassPK15JNINativeMethodi",
         "_ZN3art3JNI15RegisterNativesEP7_JNIEnvP7_jclassPK15JNINativeMethodib",
+        // Android 13+ moved RegisterNatives onto JniRuntime / JniInternal.
+        "_ZN3art10JniRuntime15RegisterNativesEP7_JNIEnvP7_jclassPK15JNINativeMethodi",
+        "_ZN3art10JniRuntime15RegisterNativesEP7_JNIEnvP7_jclassPK15JNINativeMethodib",
         nullptr
     };
 
@@ -220,26 +212,22 @@ bool hook_art_register_natives() {
 
 extern "C" {
 
-int shamrock_dynscan_init(JNIEnv *env) {
+int shamrock_dynscan_init(JNIEnv * /*env*/) {
     if (g_hook_installed.exchange(true)) {
         return 0;
     }
 
 #if SHAMROCK_HAS_SHADOWHOOK
-    if (!hook_art_register_natives()) {
-        LOGW("libart RegisterNatives hook failed, trying JNIEnv table patch");
+    if (hook_art_register_natives()) {
+        LOGI("dynscan initialized, waiting for libfekit RegisterNatives...");
+        return 0;
     }
+    LOGW("libart RegisterNatives hook unavailable on this build — "
+         "sign will fall back to Java reflection");
+#else
+    LOGW("ShadowHook not built in — dynscan disabled");
 #endif
-
-    if (g_orig_register_natives == nullptr) {
-        if (!patch_jni_register_natives(env)) {
-            LOGE("dynscan: failed to hook RegisterNatives");
-            g_hook_installed.store(false);
-            return -1;
-        }
-    }
-
-    LOGI("dynscan initialized, waiting for libfekit RegisterNatives...");
+    // Successful "degraded" path: anti-detect + hide still work.
     return 0;
 }
 

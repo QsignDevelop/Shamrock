@@ -1,10 +1,8 @@
 package moe.RinShiona.Shamrock.xposed.ipc.impl
 
 import android.content.Context
-import android.os.Build
 import de.robv.android.xposed.XposedBridge
 import java.io.File
-import java.util.zip.ZipFile
 
 /**
  * Kotlin <-> native bridge for libshamrocknt.so.
@@ -49,10 +47,7 @@ internal object ShamrockNative {
             XposedBridge.log("[ShamrockNative] no host context for native load")
             return false
         }
-        if (loadFromModuleNativeDir(ctx)) return true
-        // Do not extract .so into QQ cache — dlopen from QQ data dir breaks ShadowHook JNI_OnLoad.
-        XposedBridge.log("[ShamrockNative] module nativeLibraryDir load failed; skip cache extract")
-        return false
+        return loadFromModuleNativeDir(ctx)
     }
 
     private fun currentHostContext(): Context? {
@@ -69,24 +64,42 @@ internal object ShamrockNative {
         }
     }
 
-    /** Load from Shamrock APK nativeLibraryDir via createPackageContext (works inside QQ process). */
+    /**
+     * Load .so files using the LSPosed module ClassLoader (the same CL that
+     * owns this ShamrockNative class), so the JVM links exported Java_* symbols
+     * back to the right Class instance. The .so itself avoids libandroid.so so
+     * dlopen succeeds in the com_android_art namespace.
+     */
     private fun loadFromModuleNativeDir(hostCtx: Context): Boolean {
         return kotlin.runCatching {
             val moduleCtx = hostCtx.createPackageContext(
                 MODULE_PKG,
                 Context.CONTEXT_INCLUDE_CODE or Context.CONTEXT_IGNORE_SECURITY,
             )
-            val dir = moduleCtx.applicationInfo.nativeLibraryDir ?: return false
-            val shadow = File(dir, "lib$LIB_SHADOW.so")
-            val nt = File(dir, "lib$LIB_NT.so")
-            if (!shadow.exists() || !nt.exists()) {
-                XposedBridge.log("[ShamrockNative] module native dir missing so: shadow=${shadow.exists()} nt=${nt.exists()}")
+            val ownCl = ShamrockNative::class.java.classLoader ?: run {
+                XposedBridge.log("[ShamrockNative] no own ClassLoader for native libs")
                 return false
             }
-            System.load(shadow.absolutePath)
-            XposedBridge.log("[ShamrockNative] loaded $shadow")
-            System.load(nt.absolutePath)
-            XposedBridge.log("[ShamrockNative] loaded $nt")
+            val dir = moduleCtx.applicationInfo.nativeLibraryDir
+            XposedBridge.log("[ShamrockNative] module nativeLibraryDir=$dir")
+            val shadow = resolveNativeSo(moduleCtx, dir, LIB_SHADOW) ?: run {
+                XposedBridge.log("[ShamrockNative] libshadowhook.so not found anywhere")
+                return false
+            }
+            val nt = resolveNativeSo(moduleCtx, dir, LIB_NT) ?: run {
+                XposedBridge.log("[ShamrockNative] libshamrocknt.so not found anywhere")
+                return false
+            }
+            val nativeLoad = resolveNativeLoad()
+            if (nativeLoad == null) {
+                XposedBridge.log("[ShamrockNative] Runtime.nativeLoad missing — using System.load")
+                System.load(shadow.absolutePath)
+                System.load(nt.absolutePath)
+            } else {
+                loadWithModuleClassloader(nativeLoad, ownCl, shadow.absolutePath)
+                loadWithModuleClassloader(nativeLoad, ownCl, nt.absolutePath)
+            }
+            XposedBridge.log("[ShamrockNative] loaded ${shadow.absolutePath} + ${nt.absolutePath} via own CL")
             true
         }.getOrElse {
             XposedBridge.log("[ShamrockNative] loadFromModuleNativeDir failed: ${it.message}")
@@ -94,56 +107,48 @@ internal object ShamrockNative {
         }
     }
 
-    private fun extractAndLoadPair(apkPath: String, hostCtx: Context): Boolean {
-        return kotlin.runCatching {
-            ZipFile(apkPath).use { zip ->
-                val abi = Build.SUPPORTED_ABIS.firstOrNull { candidate ->
-                    zip.getEntry("lib/$candidate/lib$LIB_NT.so") != null &&
-                        zip.getEntry("lib/$candidate/lib$LIB_SHADOW.so") != null
-                } ?: return false
-
-                val cacheRoot = File(hostCtx.cacheDir, "shamrocknt").apply { mkdirs() }
-                val shadowOut = File(cacheRoot, "lib$LIB_SHADOW.so")
-                val ntOut = File(cacheRoot, "lib$LIB_NT.so")
-
-                fun extract(entryName: String, out: File) {
-                    if (!out.exists() || out.length() <= 0L) {
-                        zip.getInputStream(zip.getEntry(entryName)!!).use { input ->
-                            out.outputStream().use { output -> input.copyTo(output) }
-                        }
-                        out.setReadable(true, false)
-                        out.setExecutable(true, false)
-                    }
-                }
-
-                extract("lib/$abi/lib$LIB_SHADOW.so", shadowOut)
-                extract("lib/$abi/lib$LIB_NT.so", ntOut)
-
-                System.load(shadowOut.absolutePath)
-                XposedBridge.log("[ShamrockNative] loaded extracted $shadowOut")
-                System.load(ntOut.absolutePath)
-                XposedBridge.log("[ShamrockNative] loaded extracted $ntOut")
-                true
-            }
-        }.getOrElse {
-            XposedBridge.log("[ShamrockNative] extractAndLoadPair failed: ${it.message}")
-            false
+    /**
+     * Look for a .so in the package nativeLibraryDir first, then fall back to
+     * scanning the installed APK's lib/<abi>/ entries (handy when AGP packaged
+     * the lib only for a specific ABI). Returns the absolute file we can dlopen.
+     */
+    private fun resolveNativeSo(
+        moduleCtx: Context,
+        nativeLibraryDir: String?,
+        libName: String,
+    ): File? {
+        nativeLibraryDir?.let { dir ->
+            val direct = File(dir, "lib$libName.so")
+            if (direct.exists() && direct.length() > 0L) return direct
         }
-    }
-
-    private fun resolveModuleApkPath(): String? {
-        val cl = ShamrockNative::class.java.classLoader ?: return null
-        for (fieldName in listOf("apk", "modulePath", "moduleApkPath")) {
-            kotlin.runCatching {
-                val field = cl.javaClass.getDeclaredField(fieldName)
-                field.isAccessible = true
-                (field.get(cl) as? String)?.takeIf { it.endsWith(".apk") }?.let { return it }
-            }
-        }
-        Regex("module=([^,\\]]+)").find(cl.toString())?.groupValues?.get(1)?.trim()?.let {
-            if (it.endsWith(".apk")) return it
+        val abiList = listOf("arm64-v8a", "x86_64", "armeabi-v7a", "x86")
+        val apkDir = File(moduleCtx.applicationInfo.sourceDir).parentFile ?: return null
+        for (abi in abiList) {
+            val candidate = File(apkDir, "lib/$abi/lib$libName.so")
+            if (candidate.exists() && candidate.length() > 0L) return candidate
         }
         return null
+    }
+
+    private fun resolveNativeLoad(): java.lang.reflect.Method? {
+        return kotlin.runCatching {
+            val m = Runtime::class.java.getDeclaredMethod(
+                "nativeLoad", String::class.java, ClassLoader::class.java
+            )
+            m.isAccessible = true
+            m
+        }.getOrNull()
+    }
+
+    private fun loadWithModuleClassloader(
+        nativeLoad: java.lang.reflect.Method,
+        moduleCl: ClassLoader,
+        path: String,
+    ) {
+        val ret = nativeLoad.invoke(null, path, moduleCl)
+        if (ret is String && ret.isNotEmpty()) {
+            throw UnsatisfiedLinkError("dlopen failed for $path: $ret")
+        }
     }
 
     fun status(): String {

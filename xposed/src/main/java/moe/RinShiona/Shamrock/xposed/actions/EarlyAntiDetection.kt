@@ -57,7 +57,42 @@ internal object EarlyAntiDetection {
         } else {
             installNonMainProcessHooks()
         }
+        if (isMain) {
+            bootstrapNative()
+        }
         fullyInstalled = true
+    }
+
+    /** Boot libshamrocknt + libshadowhook in the QQ main process. */
+    private fun bootstrapNative() {
+        kotlin.runCatching {
+            val ctx = currentHostContext()
+            if (ctx == null) {
+                log("native bootstrap skipped: no host context")
+                return
+            }
+            val ok = ShamrockNative.bootstrap(ctx)
+            log("native bootstrap => $ok (initialized=${ShamrockNative.initialized})")
+            if (ok) {
+                log("native status: ${ShamrockNative.status()}")
+            }
+        }.onFailure {
+            log("native bootstrap failed: ${it.message}")
+        }
+    }
+
+    private fun currentHostContext(): android.content.Context? {
+        return kotlin.runCatching {
+            Class.forName("android.app.ActivityThread")
+                .getMethod("currentApplication")
+                .invoke(null) as? android.content.Context
+        }.getOrElse {
+            kotlin.runCatching {
+                Class.forName("mqq.app.MobileQQ")
+                    .getMethod("getContext")
+                    .invoke(null) as? android.content.Context
+            }.getOrNull()
+        }
     }
 
     fun install(classLoader: ClassLoader) {
