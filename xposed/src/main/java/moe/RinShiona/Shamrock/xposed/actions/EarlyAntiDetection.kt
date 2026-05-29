@@ -25,10 +25,59 @@ import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 internal object EarlyAntiDetection {
     private val criticalInstalled = AtomicBoolean(false)
     private val deferredInstalled = AtomicBoolean(false)
+    private val msfInstalled = AtomicBoolean(false)
 
     @Volatile
     var fullyInstalled: Boolean = false
         private set
+
+    /**
+     * MSF-process anti-detection. THE sign (QQSecuritySign.getSign / libfekit)
+     * is generated in the `com.tencent.mobileqq:MSF` process, so the libfekit
+     * native environment scan that packs the detection bitfield runs HERE, not
+     * in the main process. Previously MSF ran "IPC-only" with zero anti-detect,
+     * which is why the decrypted detection bits never changed.
+     *
+     * We install ONLY the pieces that are safe for the fragile MSF process AND
+     * cannot break the sign itself:
+     *   - HookEvasion   : hide hook frames / spoof system props (no sign touch)
+     *   - KillGuard     : stop self-kill if a probe still fires
+     *   - libfekit load hook + native bootstrap : the native /proc maps filter
+     *     and libfekit probe inline-hooks (return 0 = "no hook") — this is the
+     *     part that actually changes what libfekit's native scan observes.
+     *
+     * Deliberately NOT installed in MSF:
+     *   - QSecBypassHooks — it neutralizes QSec.execTasks / doSomething /
+     *     getFeKitAttach which, in the MSF sign process, are load-bearing for
+     *     generating the sign. Neutering them here would break login, not just
+     *     detection. (In the main process they are safe because sign isn't
+     *     produced there.)
+     *   - the broad System.loadLibrary blockers / heavy startup hooks that
+     *     previously killed MSF with libbasic_share / libforcedarkimpl errors.
+     */
+    fun installForMsf(classLoader: ClassLoader) {
+        if (!AntiDetectionConfig.allowEarlyHooks()) {
+            log("MSF: skip — anti-detect disabled by config")
+            return
+        }
+        if (!msfInstalled.compareAndSet(false, true)) return
+        log("MSF: installing sign-process anti-detection (proc=${currentProcessName()})")
+
+        runCatching { HookEvasion.install(classLoader) }
+            .onFailure { log("MSF HookEvasion failed: ${it.message}") }
+        runCatching { KillGuardHooks.install(classLoader) }
+            .onFailure { log("MSF KillGuard failed: ${it.message}") }
+        // Refresh libfekit probe hooks the moment MSF loads libfekit.so.
+        runCatching { hookLibFeKitLoad() }
+            .onFailure { log("MSF libfekit-load hook failed: ${it.message}") }
+        // Native maps filter + libfekit detection-probe inline hooks. This is
+        // the piece that makes the native scan come back clean in MSF, without
+        // touching the Java sign methods.
+        runCatching { bootstrapNative() }
+            .onFailure { log("MSF native bootstrap failed: ${it.message}") }
+
+        log("MSF: sign-process anti-detection installed")
+    }
 
     /** Fast path on main thread — QSec.detectMethod + KillGuard only. */
     fun installCritical(classLoader: ClassLoader) {

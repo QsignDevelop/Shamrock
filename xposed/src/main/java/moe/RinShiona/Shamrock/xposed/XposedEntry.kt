@@ -12,6 +12,7 @@ import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 import moe.RinShiona.Shamrock.xposed.loader.FuckAMS
 import moe.RinShiona.Shamrock.xposed.loader.LuoClassloader
+import moe.RinShiona.Shamrock.xposed.helper.NativeCrashGuard
 import moe.RinShiona.Shamrock.xposed.helper.NtTaskSecurityGuard
 import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.tools.FuzzySearchClass
@@ -96,9 +97,18 @@ internal class XposedEntry: IXposedHookLoadPackage {
         entryMQQ(classLoader)
     }
 
-    /** MSF 子进程：仅 IPC/DataReceiver，不装反检测 hook（避免 libbasic_share 等问题）。 */
+    /**
+     * MSF 子进程。历史上为避免 libbasic_share 崩溃只跑 IPC-only，但签名
+     * (QQSecuritySign/libfekit) 正是在 MSF 生成的——检测位也在这里被原生扫描打包。
+     * 因此这里必须装上 **签名进程专用反检测**（QSecBypass + HookEvasion + 原生
+     * maps 过滤 + libfekit probe hook），否则检测位永远不变。
+     * 同时尽早装 NativeCrashGuard，吞掉 cmark.NativeLib 之类的非致命 JNI 崩溃。
+     */
     private fun entryMsf(classLoader: ClassLoader) {
-        plog("entryMsf — IPC-only mode")
+        plog("entryMsf — sign-process anti-detect mode")
+        kotlin.runCatching { NativeCrashGuard.install(classLoader) }
+        kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
+            .onFailure { plog("MSF anti-detect install failed: ${it.message}") }
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
                 ?: param.args.firstOrNull()?.javaClass?.classLoader
@@ -204,6 +214,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — NtTask guard + late service init")
+        kotlin.runCatching { NativeCrashGuard.install(classLoader) }
         kotlin.runCatching { NtTaskSecurityGuard.install(classLoader) }
         kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
 

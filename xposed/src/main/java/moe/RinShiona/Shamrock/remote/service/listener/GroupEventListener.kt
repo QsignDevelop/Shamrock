@@ -4,6 +4,7 @@ import com.tencent.qqnt.kernel.nativeinterface.BulletinFeedsDownloadInfo
 import com.tencent.qqnt.kernel.nativeinterface.DataSource
 import com.tencent.qqnt.kernel.nativeinterface.GroupBulletin
 import com.tencent.qqnt.kernel.nativeinterface.GroupBulletinListResult
+import com.tencent.qqnt.kernel.nativeinterface.GroupAllInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupDetailInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupListUpdateType
 import com.tencent.qqnt.kernel.nativeinterface.GroupMemberInfoListId
@@ -61,6 +62,23 @@ internal object GroupEventListener: IKernelGroupListener {
 
     override fun onGroupNotifiesUnreadCountUpdated(z: Boolean, j2: Long, i2: Int) {
         LogCenter.log("onGroupNotifiesUnreadCountUpdated($z, $j2, $i2)")
+    }
+
+    // QQ NT 9.2.90 added overloads — implement to avoid AbstractMethodError
+    // when the kernel dispatches the callback.
+    override fun onGroupNotifiesUnreadCountUpdatedV2(
+        z: Boolean,
+        j2: Long,
+        i2: Int,
+        i3: Int,
+        i4: Int,
+        i5: Int
+    ) {
+        //LogCenter.log("onGroupNotifiesUnreadCountUpdatedV2($z, $j2, $i2, $i3, $i4, $i5)")
+    }
+
+    override fun onGroupAllInfoChange(groupAllInfo: GroupAllInfo?) {
+        //LogCenter.log("onGroupAllInfoChange($groupAllInfo)")
     }
 
     override fun onGroupNotifiesUpdated(z: Boolean, arrayList: ArrayList<GroupNotifyMsg>?) {

@@ -22,6 +22,13 @@ public interface IKernelGroupListener {
 
     void onGroupNotifiesUnreadCountUpdated(boolean z, long j2, int i2);
 
+    // Added in QQ NT 9.2.90 — present in the host's runtime interface. Must be
+    // declared here (and implemented by every listener) or the kernel callback
+    // raises AbstractMethodError when it fires.
+    void onGroupNotifiesUnreadCountUpdatedV2(boolean z, long j2, int i2, int i3, int i4, int i5);
+
+    void onGroupAllInfoChange(GroupAllInfo groupAllInfo);
+
     void onGroupNotifiesUpdated(boolean z, ArrayList<GroupNotifyMsg> arrayList);
 
     void onGroupPortraitChange(long j2, ArrayList<String> arrayList, ArrayList<String> arrayList2);
