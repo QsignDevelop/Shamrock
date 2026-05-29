@@ -33,10 +33,20 @@ constexpr uintptr_t kRegisterNativesCallsites[8] = {
 // 检测探针候选函数（基于 /proc/self/maps、lsposed、xposed、frida、magisk 的 xref）
 // 这些函数有非常高的概率是 QQ 的反 Xposed 探针。Native hook 时只需要
 // 让它们恒返 0/false 即可绕过。
-constexpr int kDetectionProbeCount = 2;
-constexpr uintptr_t kDetectionProbeOffsets[2] = {
+// Probe function entry VAs verified by static reverse (rev_fekit_detect.py):
+//   0x3293a4  enclosing func of /proc/self/maps xref  (maps/module scan)
+//   0x2c1cf0  enclosing func of magisk xref           (root scan)
+//   0x2ae9cc  func referencing busybox + ro.debuggable (root/debug aggregator)
+// All follow the "return 0 == nothing detected" contract; the native stub
+// forces them to 0. NOTE: libfekit runtime-decrypts most detection strings and
+// builds its JNI tables in .bss at load, so pure-static xref only surfaces the
+// plaintext-string probes above — structural ART/maps hook checks are covered
+// by the /proc/self/maps fopen/openat filter in anti_detect_native.cpp.
+constexpr int kDetectionProbeCount = 3;
+constexpr uintptr_t kDetectionProbeOffsets[3] = {
     0x3293a4UL,  // proc_self_maps@0x329690
     0x2c1cf0UL,  // magisk@0x2c1cf4
+    0x2ae9ccUL,  // busybox + ro.debuggable aggregator
 };
 
 // getSign 注册 (JNI_OnLoad 内 RegisterNatives 调用)
