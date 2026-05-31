@@ -40,6 +40,8 @@
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
 #define LOGE(...) __android_log_print(ANDROID_LOG_ERROR, LOG_TAG, __VA_ARGS__)
 
+#include "shadowhook_bootstrap.h"
+
 namespace {
 
 // Library substrings whose dlopen we want to fail.
@@ -180,6 +182,10 @@ extern "C" int shamrock_hide_init(JNIEnv * /*env*/) {
     LOGI("hide_init: starting");
 
 #if SHAMROCK_HAS_SHADOWHOOK
+    if (!shamrock_ensure_shadowhook_init()) {
+        LOGW("hide_init: ShadowHook unavailable, Java-only hiding active");
+        return 0;
+    }
     install_dlopen_hook();
     install_readlink_hook();
 #else

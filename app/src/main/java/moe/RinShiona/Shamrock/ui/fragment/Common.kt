@@ -164,7 +164,7 @@ fun ActionSwitch(
 @Composable
 private fun NoticeBoxPreview() {
     NoticeBox(
-        text = "该模块仅适用于QQ版本8.9.68及以上的版本。\n" +
+        text = "该模块仅适用于目标版本9.2.90及以上的版本。\n" +
                 "同时声明本项目仅用于学习与交流，请于24小时内删除。\n" +
                 "同时开源贡献者均享受免责条例。"
     )

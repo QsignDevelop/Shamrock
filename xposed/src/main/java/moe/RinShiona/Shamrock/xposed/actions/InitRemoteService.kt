@@ -16,6 +16,10 @@ import moe.RinShiona.Shamrock.xposed.helper.RemoteServiceBootstrap
 internal class InitRemoteService : IAction {
     override fun invoke(ctx: Context) {
         if (!PlatformUtils.isMainProcess()) return
+        if (!ShamrockConfig.isOneBotV11Enabled()) {
+            LogCenter.log("OneBot v11 已关闭 — 跳过 HTTP/WS 启动", Level.INFO)
+            return
+        }
 
         GlobalScope.launch {
             try {

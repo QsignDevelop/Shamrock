@@ -20,6 +20,10 @@ import java.util.concurrent.atomic.AtomicLong
  *    detection markers here when libfekit / QSec see Xposed-like state.
  *  - Offset [9] has 0x40 toggled when detection fires (0x2f -> 0x6f).
  *  - Offset [10] flips from 0x02 (clean marker) to 0x00 (detected).
+ *  - QQ 9.2.90 packs a 0x04 0x02 trailer at [11..12] inside the 14-byte
+ *    header (e.g. 0131000200000000000400040200 → …00 04 00 04 02 00).
+ *    Longer extras may repeat the pair at [14..15]; scrub both without
+ *    touching signature bytes past the detection trailer.
  *
  *  The sign / token / proto-extra (length-delimited fields 2/3) that follow
  *  byte 14 are signature-relevant; we leave them untouched so the server
@@ -32,6 +36,8 @@ internal object SignExtraSanitizer {
     private const val H1: Byte = 0x31
     private const val DET_BIT_BYTE_9 = 0x40.toByte()
     private const val CLEAN_BYTE_10: Byte = 0x02
+    private const val TAIL_FLAG_A: Byte = 0x04
+    private const val TAIL_FLAG_B: Byte = 0x02
 
     @Volatile private var extraField: Field? = null
     @Volatile private var resultClassName: String? = null
@@ -47,7 +53,8 @@ internal object SignExtraSanitizer {
                          input[3] != 0.toByte() ||
                          input[4] != 0.toByte() ||
                          (input[9].toInt() and DET_BIT_BYTE_9.toInt()) != 0 ||
-                         input[10] != CLEAN_BYTE_10
+                         input[10] != CLEAN_BYTE_10 ||
+                         hasTail0402(input)
 
         if (!flagsDirty) return input
 
@@ -56,11 +63,65 @@ internal object SignExtraSanitizer {
         out[3] = 0
         out[4] = 0
         out[9] = (out[9].toInt() and DET_BIT_BYTE_9.toInt().inv()).toByte()
-        if (out[10] == 0.toByte()) out[10] = CLEAN_BYTE_10
+        if (out[10] != CLEAN_BYTE_10) out[10] = CLEAN_BYTE_10
+        scrubTail0402(out)
 
         sanitizeCount.incrementAndGet()
         detectionHits.incrementAndGet()
         return out
+    }
+
+    /** QQ 9.2.90 trailer probe `04 02` (in-header [11..12] and optional post-header [14..15]). */
+    private fun hasTail0402(input: ByteArray): Boolean {
+        if (input.size >= HEADER_LEN &&
+            input[11] == TAIL_FLAG_A && input[12] == TAIL_FLAG_B
+        ) {
+            return true
+        }
+        if (input.size >= HEADER_LEN + 2 &&
+            input[14] == TAIL_FLAG_A && input[15] == TAIL_FLAG_B
+        ) {
+            return true
+        }
+        if (input.size >= HEADER_LEN &&
+            input[12] == TAIL_FLAG_A && input[13] == TAIL_FLAG_B
+        ) {
+            return true
+        }
+        return input.size >= HEADER_LEN + 2 &&
+            input[12] == TAIL_FLAG_A &&
+            input[14] == TAIL_FLAG_A &&
+            input[15] == TAIL_FLAG_B
+    }
+
+    private fun scrubTail0402(out: ByteArray) {
+        if (out.size >= HEADER_LEN + 2 &&
+            out[12] == TAIL_FLAG_A &&
+            out[14] == TAIL_FLAG_A &&
+            out[15] == TAIL_FLAG_B
+        ) {
+            out[12] = 0
+            out[14] = 0
+            out[15] = 0
+        }
+        if (out.size >= HEADER_LEN &&
+            out[11] == TAIL_FLAG_A && out[12] == TAIL_FLAG_B
+        ) {
+            out[11] = 0
+            out[12] = 0
+        }
+        if (out.size >= HEADER_LEN + 2 &&
+            out[14] == TAIL_FLAG_A && out[15] == TAIL_FLAG_B
+        ) {
+            out[14] = 0
+            out[15] = 0
+        }
+        if (out.size >= HEADER_LEN &&
+            out[12] == TAIL_FLAG_A && out[13] == TAIL_FLAG_B
+        ) {
+            out[12] = 0
+            out[13] = 0
+        }
     }
 
     fun sanitizeSignResult(result: Any?): Any? {

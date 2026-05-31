@@ -51,6 +51,7 @@ import moe.RinShiona.Shamrock.R
 import moe.RinShiona.Shamrock.ui.app.AppRuntime
 import moe.RinShiona.Shamrock.ui.app.Level
 import moe.RinShiona.Shamrock.ui.app.ShamrockConfig
+import moe.RinShiona.Shamrock.ui.service.internal.broadcastToModule
 import moe.RinShiona.Shamrock.ui.theme.GlobalColor
 import moe.RinShiona.Shamrock.ui.theme.ThemeColor
 import moe.RinShiona.Shamrock.ui.tools.InputDialog
@@ -75,7 +76,7 @@ internal fun QSignPage(nick: String, uin: String) {
 }
 
 @Composable
-internal fun OneBotPage() {
+internal fun OneBotPage(onOneBotToggle: (Boolean) -> Unit = {}) {
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     Column(
@@ -84,8 +85,33 @@ internal fun OneBotPage() {
             .verticalScroll(rememberScrollState())
             .padding(16.dp),
     ) {
+        OneBotMasterCard(ctx, onOneBotToggle)
         FunctionCard(scope, ctx, "OneBot 协议")
         APIInfoCard(ctx)
+    }
+}
+
+@Composable
+private fun OneBotMasterCard(ctx: Context, onOneBotToggle: (Boolean) -> Unit) {
+    ActionBox(
+        modifier = Modifier.padding(bottom = 4.dp),
+        painter = painterResource(id = R.drawable.round_dashboard_24),
+        title = "OneBot v11 总开关",
+    ) {
+        Column {
+            Divider(color = GlobalColor.Divider, thickness = 0.2.dp)
+            Function(
+                title = "启用 OneBot v11",
+                desc = "关闭后不启动 HTTP/WS 服务，并暂停写入日志。",
+                isSwitch = ShamrockConfig.isOneBotV11Enabled(ctx),
+            ) { enabled ->
+                ShamrockConfig.setOneBotV11Enabled(ctx, enabled)
+                AppRuntime.uiLogEnabled = enabled
+                onOneBotToggle(enabled)
+                ctx.broadcastToModule { putExtra("__cmd", "checkAndStartService") }
+                true
+            }
+        }
     }
 }
 
@@ -173,12 +199,27 @@ private fun decodeSignExtraLocal(hex: String): String {
     val sb = StringBuilder()
     sb.appendLine("raw: ${data.take(14).joinToString(" ") { "%02x".format(it) }}")
     sb.appendLine("header: ${if (data[0] == 0x01.toByte() && data[1] == 0x31.toByte()) "OK" else "INVALID"}")
-    sb.appendLine("detected: ${data[2] != 0.toByte() || data[3] != 0.toByte() || data[4] != 0.toByte() || (data[9].toInt() and 0x40) != 0 || data[10] == 0.toByte()}")
+    val tail0402 = data.size >= 14 && data[11] == 0x04.toByte() && data[12] == 0x02.toByte()
+    val tail0402Post = data.size >= 16 && data[14] == 0x04.toByte() && data[15] == 0x02.toByte()
+    val span0402 = data.size >= 16 && data[12] == 0x04.toByte() &&
+        data[14] == 0x04.toByte() && data[15] == 0x02.toByte()
+    sb.appendLine(
+        "detected: ${data[2] != 0.toByte() || data[3] != 0.toByte() || data[4] != 0.toByte() || (data[9].toInt() and 0x40) != 0 || data[10] == 0.toByte() || tail0402 || tail0402Post || span0402}"
+    )
     sb.appendLine("byte[2] hook probe = 0x${"%02x".format(data[2])}")
     sb.appendLine("byte[3] env probe  = 0x${"%02x".format(data[3])}")
     sb.appendLine("byte[4] root probe  = 0x${"%02x".format(data[4])}")
     sb.appendLine("byte[9] native bit6  = ${(data[9].toInt() and 0x40) != 0}")
     sb.appendLine("byte[10] clean marker = ${data[10] == 0x02.toByte()} (0x${"%02x".format(data[10])})")
+    if (data.size >= 14) {
+        sb.appendLine("byte[11..12] tail 0402 = $tail0402 (0x${"%02x".format(data[11])} 0x${"%02x".format(data[12])})")
+    }
+    if (data.size >= 16) {
+        sb.appendLine("byte[14..15] tail 0402 = $tail0402Post (0x${"%02x".format(data[14])} 0x${"%02x".format(data[15])})")
+    }
+    if (span0402) {
+        sb.appendLine("byte[12..15] span 0400..0402 = true")
+    }
     return sb.toString().trimEnd()
 }
 

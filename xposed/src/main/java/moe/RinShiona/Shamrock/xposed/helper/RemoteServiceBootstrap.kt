@@ -50,6 +50,20 @@ internal object RemoteServiceBootstrap {
     }
 
     fun apply(ctx: android.content.Context) {
+        if (!ShamrockConfig.isOneBotV11Enabled()) {
+            wsServer?.let {
+                runCatching { it.stop() }
+                GlobalPusher.unregister(it)
+            }
+            wsServer = null
+            wsServerPort = -1
+            wsClients.keys.toList().forEach { stopWsClient(it) }
+            if (httpHookRegistered) {
+                GlobalPusher.unregister(HttpService)
+                httpHookRegistered = false
+            }
+            return
+        }
         syncHttpWebhook()
         syncWebSocketServer()
         if (PlatformUtils.isMqqPackage()) {

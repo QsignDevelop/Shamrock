@@ -49,10 +49,18 @@ class PullConfig: IAction {
                 ))
             })
             DynamicReceiver.register("checkAndStartService", IPCRequest {
+                XPrefConfigLoader.loadIfAvailable()
+                if (!ShamrockConfig.isOneBotV11Enabled()) {
+                    if (HTTPServer.isServiceStarted) {
+                        GlobalScope.launch { HTTPServer.stop() }
+                        HTTPServer.isServiceStarted = false
+                    }
+                    RemoteServiceBootstrap.apply(MobileQQ.getContext())
+                    return@IPCRequest
+                }
                 if (HTTPServer.isServiceStarted) {
                     HTTPServer.isServiceStarted = false
                 }
-                XPrefConfigLoader.loadIfAvailable()
                 RemoteServiceBootstrap.apply(MobileQQ.getContext())
                 initAppService(MobileQQ.getContext())
             })

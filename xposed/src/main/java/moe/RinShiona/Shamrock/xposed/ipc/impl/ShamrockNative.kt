@@ -212,7 +212,7 @@ internal object ShamrockNative {
     }
 
     fun onLibFeKitLoaded() {
-        if (!libraryLoaded) return
+        if (!libraryLoaded || !initialized) return
         runCatching {
             nativeOnLibFeKitLoaded()
             XposedBridge.log("[ShamrockNative] libfekit probe hooks refreshed")

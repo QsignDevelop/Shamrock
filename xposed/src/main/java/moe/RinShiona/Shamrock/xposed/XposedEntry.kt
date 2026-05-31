@@ -132,6 +132,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }
         kotlin.runCatching { MsfBootGuard.installMsf(classLoader) }
         kotlin.runCatching { NativeCrashGuard.install(classLoader) }
+        kotlin.runCatching { EarlyAntiDetection.bootstrapNativeAntiDetectForMsf() }
         if (!AntiDetectionConfig.connectivitySafeMode) {
             kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
                 .onFailure { plog("MSF anti-detect install failed: ${it.message}") }

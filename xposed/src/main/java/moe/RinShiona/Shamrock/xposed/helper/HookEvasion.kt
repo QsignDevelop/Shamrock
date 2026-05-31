@@ -60,6 +60,7 @@ internal object HookEvasion {
         scrubSystemProperties(classLoader)
         scrubDebugProbes()
         scrubShellProbes()
+        runCatching { AdbHideHooks.install(classLoader) }
 
         log("hook-evasion layer installed (core)")
     }
@@ -268,7 +269,22 @@ internal object HookEvasion {
         "sys.oem_unlock_allowed" to "0",
         "oem_unlock_allowed" to "0",
         "ro.oem_unlock_supported" to "0",
+        "ro.adb.secure" to "1",
+        "persist.sys.adb.enable" to "0",
+        "persist.sys.usb.config" to "none",
+        "persist.sys.usb.qmmi.func" to "none",
+        "vendor.usb.config" to "none",
+        "sys.usb.configfs" to "0",
+        "ctl.start" to "none",
+        "ctl.stop" to "adbd",
+        "ctl.restart" to "none",
     )
+
+    private fun isAdbOrUsbProp(key: String): Boolean {
+        val k = key.lowercase()
+        return k.contains("adb") ||
+            k.contains("usb") && (k.contains("config") || k.contains("state") || k.contains("function"))
+    }
 
     private fun scrubSystemProperties(classLoader: ClassLoader) {
         val cls = runCatching {
@@ -280,8 +296,22 @@ internal object HookEvasion {
         runCatching {
             XposedBridge.hookAllMethods(cls, "get", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
-                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val key = param.args.getOrNull(0) as? String ?: return
+                    val probe = ModuleHide.isSecurityScannerCaller() ||
+                        AdbHideHooks.shouldHideAdb()
+                    if (!probe) return
+                    if (isAdbOrUsbProp(key)) {
+                        param.result = when {
+                            key.contains("usb", ignoreCase = true) &&
+                                key.contains("config", ignoreCase = true) -> "none"
+                            key.contains("adb", ignoreCase = true) &&
+                                key.contains("secure", ignoreCase = true) -> "1"
+                            key.contains("adb", ignoreCase = true) -> "0"
+                            key.contains("init.svc.adbd", ignoreCase = true) -> "stopped"
+                            else -> "0"
+                        }
+                        return
+                    }
                     val safe = PROP_SAFE_DEFAULTS[key]
                         ?: ModuleHide.sanitizeBootloaderProp(key, null)
                         ?: return

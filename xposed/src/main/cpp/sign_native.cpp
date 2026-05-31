@@ -21,6 +21,8 @@
 #  define SHAMROCK_HAS_SHADOWHOOK 0
 #endif
 
+#include "shadowhook_bootstrap.h"
+
 #define LOG_TAG "ShamrockSign"
 #define LOGI(...) __android_log_print(ANDROID_LOG_INFO,  LOG_TAG, __VA_ARGS__)
 #define LOGW(...) __android_log_print(ANDROID_LOG_WARN,  LOG_TAG, __VA_ARGS__)
@@ -191,15 +193,7 @@ extern "C" int shamrock_sign_init(JNIEnv *env) {
     LOGI("sign_init: starting");
 
 #if SHAMROCK_HAS_SHADOWHOOK
-    static std::atomic<bool> sh_inited{false};
-    if (!sh_inited.exchange(true)) {
-        int rc = shadowhook_init(SHADOWHOOK_MODE_SHARED, false);
-        if (rc != 0) {
-            LOGE("shadowhook_init failed: %d", rc);
-        } else {
-            LOGI("shadowhook initialized (SHARED mode)");
-        }
-    }
+    shamrock_ensure_shadowhook_init();
 #endif
 
     shamrock_dynscan_init(env);

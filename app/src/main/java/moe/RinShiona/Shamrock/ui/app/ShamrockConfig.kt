@@ -160,6 +160,19 @@ object ShamrockConfig {
         pushUpdate(ctx)
     }
 
+    /** OneBot v11 总开关：关闭后不启动 HTTP/WS，且 App 内不显示日志页。 */
+    fun isOneBotV11Enabled(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("onebot_v11", true)
+    }
+
+    fun setOneBotV11Enabled(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("onebot_v11", v).apply()
+        AppRuntime.uiLogEnabled = v
+        pushUpdate(ctx)
+    }
+
     fun getWsAddr(ctx: Context): String {
         val preferences = ctx.getSharedPreferences("config", 0)
         return preferences.getString("ws_addr", "")!!
@@ -298,6 +311,7 @@ object ShamrockConfig {
             "key_store" to preferences.getString("key_store", ""),
             "enable_self_msg" to preferences.getBoolean("enable_self_msg", false),
             "echo_number" to preferences.getBoolean("echo_number", false),
+            "onebot_v11" to preferences.getBoolean("onebot_v11", true),
             // Anti-Detection Config
             "anti_detection_enabled" to preferences.getBoolean("anti_detection_enabled", true),
             "anti_connectivity_safe" to preferences.getBoolean("anti_connectivity_safe", true),

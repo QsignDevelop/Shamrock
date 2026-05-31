@@ -12,15 +12,20 @@ import moe.RinShiona.Shamrock.R
 private val LocalStringDefault = Default()
 private val LocalString2B = Chūnibyō()
 
-val RANDOM_TITLE = arrayOf(
-    "Clover", "CuteKitty", "CherryPop",
-    "Threeleaf", "CuteCat", "FuckingCat",
-    "XVideos", "Onlyfans", "Pornhub",
-    "Xposed", "LittleFox", "Springboot",
-    "Kotlin", "Rust & Android", "Dashabi",
-    "YYDS", "Amd Yes", "Gayhub",
-    "Yuzukkity", "HongKongDoll", "Xinrao"
+val CUTE_SUBTITLES = arrayOf(
+    "今天也要元气满满喵～",
+    "CherryPop 陪你连接 QQ 世界 ♡",
+    "签签顺利，消息多多～",
+    "白粉色小宇宙启动中…",
+    "喵帕斯！OneBot 就绪了吗？",
+    "像棉花糖一样软软的连接",
+    "星星和 cherry 都为你亮着",
+    "摸鱼不忘看日志喵（大概",
+    "今日运势：接口全绿 ✨",
+    "给 QQ 套上一层梦幻滤镜",
 )
+
+val RANDOM_TITLE = arrayOf("CherryPop")
 val RANDOM_SUB_TITLE = arrayOf(
     "A Framework Base On Xposed",
     "今天吃什么好呢?",
@@ -82,7 +87,7 @@ private open class Default: VarString(
         "设置" to R.drawable.baseline_security_24,
     ), "框架已激活", "框架未激活",
     "已激活", "未激活",
-    legalWarning = "该模块仅适用于目标版本8.9.68及以上的版本。\n" +
+    legalWarning = "该模块仅适用于目标版本9.2.90及以上的版本。\n" +
             "同时声明本项目仅用于学习与交流，请于24小时内删除。\n" +
             "同时开源贡献者均享受免责条例。",
     labWarning = "实验室功能，可能会导致出乎意料的BUG!",

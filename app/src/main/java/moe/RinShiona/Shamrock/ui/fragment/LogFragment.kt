@@ -28,6 +28,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import moe.RinShiona.Shamrock.ui.app.AppRuntime
 import moe.RinShiona.Shamrock.ui.app.Logger
+import moe.RinShiona.Shamrock.ui.app.ShamrockConfig
+import androidx.compose.ui.platform.LocalContext
 import moe.RinShiona.Shamrock.ui.theme.GlobalColor
 
 @Composable
@@ -35,12 +37,20 @@ fun LogFragment(
     logger: Logger
 ) {
     //val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    val enabled = remember { ShamrockConfig.isOneBotV11Enabled(ctx) }
     Column(
         modifier = Modifier
             .fillMaxSize()
             .padding(16.dp)
     ) {
-        NoticeBox(text = "日志仅保留最新的${AppRuntime.maxLogSize}条，超出部分会自动删除，如有需要请做好保留。")
+        NoticeBox(
+            text = if (enabled) {
+                "日志仅保留最新的${AppRuntime.maxLogSize}条，超出部分会自动删除，如有需要请做好保留。"
+            } else {
+                "OneBot v11 已关闭：HTTP/WS 不启动，日志也不会写入（但 Tab 保留显示）。"
+            }
+        )
 
         Box(
             modifier = Modifier
@@ -67,7 +77,7 @@ fun LogFragment(
                 SelectionContainer {
                     Text(
                         modifier = Modifier.fillMaxWidth(),
-                        text = logger.logValue.value,
+                        text = if (enabled) logger.logValue.value else AnnotatedString("（日志已暂停）"),
                         fontSize = 12.sp,
                         color = GlobalColor.NoticeBoxText
                     )

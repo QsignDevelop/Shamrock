@@ -54,6 +54,8 @@ internal object ShamrockConfig {
 
             putBoolean("echo_number", intent.getBooleanExtra("echo_number", false)) // 将echo格式化为数字输出
 
+            putBoolean("onebot_v11", intent.getBooleanExtra("onebot_v11", true))
+
             putBoolean("isInit", true)
         }
     }
@@ -61,6 +63,11 @@ internal object ShamrockConfig {
     fun isEchoNumber(): Boolean {
         val mmkv = MMKVFetcher.mmkvWithId("shamrock_config")
         return mmkv.getBoolean("echo_number", false)
+    }
+
+    fun isOneBotV11Enabled(): Boolean {
+        val mmkv = MMKVFetcher.mmkvWithId("shamrock_config")
+        return mmkv.getBoolean("onebot_v11", true)
     }
 
     /**

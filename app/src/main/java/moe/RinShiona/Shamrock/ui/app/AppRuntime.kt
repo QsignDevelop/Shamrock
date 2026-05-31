@@ -38,7 +38,16 @@ object AppRuntime {
         lateinit var nick: MutableState<String>
     }
 
+    /** 与 [ShamrockConfig.isOneBotV11Enabled] 同步，供无 Context 的日志路径使用。 */
+    @Volatile
+    var uiLogEnabled: Boolean = true
+
+    var enableUiLog: Boolean
+        get() = uiLogEnabled
+        set(value) { uiLogEnabled = value }
+
     fun log(msg: String, level: Level = Level.INFO) {
+        if (!uiLogEnabled) return
         if (::logger.isInitialized) {
             GlobalScope.launch {
                 lock.withLock {

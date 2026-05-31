@@ -4,11 +4,13 @@ import android.content.ContentValues
 import android.content.Context
 import moe.RinShiona.Shamrock.ui.app.AppRuntime
 import moe.RinShiona.Shamrock.ui.app.Level
+import moe.RinShiona.Shamrock.ui.app.ShamrockConfig
 
 object LogHandler: ModuleHandler() {
     override val cmd: String = "send_message"
 
     override fun onReceive(callbackId: Int, values: ContentValues, context: Context) {
+        if (!ShamrockConfig.isOneBotV11Enabled(context)) return
         val msg = values.getAsString("string")
         val level = when (values.getAsInteger("level")) {
             0 -> Level.DEBUG

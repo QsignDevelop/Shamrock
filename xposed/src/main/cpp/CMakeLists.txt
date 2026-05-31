@@ -44,6 +44,7 @@ add_compile_options(-fvisibility=hidden)
 # Loaded from Kotlin via System.loadLibrary("shamrock").
 add_library(${CMAKE_PROJECT_NAME} SHARED
     shamrock_native.cpp     # JNI_OnLoad + entry table
+    shadowhook_bootstrap.cpp # shared ShadowHook init (anti-detect-only path)
     dynscan_native.cpp      # runtime RegisterNatives capture
     sign_native.cpp         # FEKit getSign hook + JNI bridge
     anti_detect_native.cpp  # QSec.detectMethod / ArtTiHook bypass

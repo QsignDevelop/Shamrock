@@ -6,6 +6,7 @@ import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import moe.RinShiona.Shamrock.xposed.helper.DetectionKillShield
+import moe.RinShiona.Shamrock.xposed.helper.AdbHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.HookEvasion
 import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
 import moe.RinShiona.Shamrock.xposed.helper.ModuleHideHooks
@@ -62,10 +63,21 @@ internal object EarlyAntiDetection {
     private val attachHookInstalled = AtomicBoolean(false)
 
     /**
+     * connectivity-safe 下 sign extra 只在 :MSF 生成；主进程装 native（fopen/probe）
+     * 会与 QQ 自带 shadowhook / Looper 冲突并 SIGSEGV，表现为 HTTP/WS 循环重启。
+     */
+    private fun allowMainProcessNativeBootstrap(): Boolean {
+        if (!isMainQqProcess()) return false
+        if (AntiDetectionConfig.connectivitySafeMode) return false
+        return true
+    }
+
+    /**
      * ArtTiHook 在 attach 后极早运行 — 必须在此时装好 maps 过滤 / exit hook。
      */
     fun installAttachNativeHook(classLoader: ClassLoader) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
+        if (!allowMainProcessNativeBootstrap()) return
         if (!isMainQqProcess()) return
         if (!attachHookInstalled.compareAndSet(false, true)) return
         runCatching {
@@ -90,6 +102,10 @@ internal object EarlyAntiDetection {
     /** 轮询兜底：attach 未触发时尽快 bootstrap native。 */
     fun scheduleNativeBootstrapEarly() {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
+        if (!allowMainProcessNativeBootstrap()) {
+            log("skip main native bootstrap (MSF-only in connectivity-safe)")
+            return
+        }
         if (!isMainQqProcess()) return
         if (!nativeEarlyStarted.compareAndSet(false, true)) return
         Thread({
@@ -113,8 +129,25 @@ internal object EarlyAntiDetection {
         }, "Shamrock-EarlyNative").apply { isDaemon = true; start() }
     }
 
+    fun bootstrapNativeAntiDetectForMsf(ctx: android.content.Context? = null) {
+        if (!AntiDetectionConfig.allowLiteAntiDetect()) return
+        if (!isMsfProcess()) return
+        if (ShamrockNative.initialized) return
+        val host = ctx ?: currentHostContext() ?: return
+        kotlin.runCatching {
+            val ok = ShamrockNative.bootstrapAntiDetectOnly(host.applicationContext ?: host)
+            log("MSF native anti bootstrap => $ok")
+        }.onFailure {
+            log("MSF native anti bootstrap failed: ${it.message}")
+        }
+    }
+
+    private fun isMsfProcess(): Boolean =
+        currentProcessName().endsWith(":MSF")
+
     fun bootstrapNativeAntiDetect(ctx: android.content.Context? = null) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
+        if (!allowMainProcessNativeBootstrap()) return
         if (!isMainQqProcess()) return
         if (ShamrockNative.initialized) return
         val host = ctx ?: currentHostContext() ?: return
@@ -144,7 +177,8 @@ internal object EarlyAntiDetection {
             scheduleNativeBootstrapEarly()
             installAttachNativeHook(classLoader)
         } else {
-            log("lite subproc: Java anti-detect + sign extra scrub (no native in MSF)")
+            log("lite subproc: Java anti-detect + MSF native bootstrap")
+            bootstrapNativeAntiDetectForMsf(currentHostContext())
         }
         QQ9290DetectionHooks.installCritical(classLoader)
         runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
@@ -171,8 +205,10 @@ internal object EarlyAntiDetection {
     fun installLiteBeforeArtTi(classLoader: ClassLoader) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
         val mainProc = isMainQqProcess()
-        if (mainProc) {
+        if (mainProc && allowMainProcessNativeBootstrap()) {
             bootstrapNativeAntiDetect(currentHostContext())
+        } else if (isMsfProcess()) {
+            bootstrapNativeAntiDetectForMsf(currentHostContext())
         }
         DetectionKillShield.arm(180_000L)
         QQ9290DetectionHooks.installCritical(classLoader)
@@ -226,10 +262,12 @@ internal object EarlyAntiDetection {
 
         runCatching { HookEvasion.install(classLoader) }
             .onFailure { log("MSF HookEvasion failed: ${it.message}") }
+        runCatching { AdbHideHooks.install(classLoader) }
+            .onFailure { log("MSF AdbHide failed: ${it.message}") }
         runCatching { KillGuardHooks.install(classLoader) }
             .onFailure { log("MSF KillGuard failed: ${it.message}") }
-        // 禁止在 MSF 加载 libshamrocknt — libfekit 扫 maps 会直接 FATAL 杀进程。
-        log("MSF: Java-only anti-detect (no native bootstrap)")
+        bootstrapNativeAntiDetectForMsf(currentHostContext())
+        log("MSF: sign-process anti-detect installed")
     }
 
     /** Fast path on main thread — QSec.detectMethod + KillGuard only. */
