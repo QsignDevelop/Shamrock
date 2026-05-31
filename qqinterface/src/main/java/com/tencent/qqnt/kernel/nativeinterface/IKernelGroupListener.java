@@ -31,6 +31,15 @@ public interface IKernelGroupListener {
 
     void onGroupNotifiesUpdated(boolean z, ArrayList<GroupNotifyMsg> arrayList);
 
+    // QQ NT 9.2.90
+    void onGroupNotifiesUpdatedV2(boolean z, long j2, ArrayList arrayList, ArrayList arrayList2);
+
+    void onGroupExtListUpdate(GroupExtListUpdateType groupExtListUpdateType, ArrayList arrayList);
+
+    void onGroupMemberNewExtInfoChange(long j2, ArrayList arrayList);
+
+    void onGroupSingleScreenNotifiesV2(boolean z, long j2, ArrayList arrayList);
+
     void onGroupPortraitChange(long j2, ArrayList<String> arrayList, ArrayList<String> arrayList2);
 
     void onGroupSingleScreenNotifies(boolean z, long j2, ArrayList<GroupNotifyMsg> arrayList);
@@ -44,6 +53,12 @@ public interface IKernelGroupListener {
     void onMemberInfoChange(long j2, DataSource dataSource, HashMap<String, MemberInfo> hashMap);
 
     void onMemberListChange(GroupMemberListChangeInfo groupMemberListChangeInfo);
+
+    // QQ NT 9.2.90 — kernel dispatches this; missing override → AbstractMethodError / JNI FatalError
+    void onGroupMemberLevelInfoChange(long j2, GroupMemberLevelInfo groupMemberLevelInfo);
+
+    // QQ NT 9.2.90 — AIO slot layout callbacks
+    void onGroupAIOSlotInfoChange(ArrayList arrayList);
 
     void onSearchMemberChange(String str, String str2, ArrayList<GroupMemberInfoListId> arrayList, HashMap<String, MemberInfo> hashMap);
 

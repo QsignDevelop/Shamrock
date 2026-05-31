@@ -58,7 +58,7 @@ class MultifunctionalProvider: ContentProvider() {
 
 inline fun Context.broadcastToModule(intentBuilder: Intent.() -> Unit) {
     val intent = Intent()
-    intent.action = "moe.RinShiona.Shamrock.xqbot.dynamic"
+    intent.action = "moe.RinShiona.CherryPop.xqbot.dynamic"
     intent.setPackage("com.tencent.mobileqq")
     intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES or Intent.FLAG_RECEIVER_FOREGROUND)
     intent.intentBuilder()

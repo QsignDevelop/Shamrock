@@ -12,6 +12,9 @@ import moe.RinShiona.Shamrock.remote.HTTPServer
 import moe.RinShiona.Shamrock.remote.service.config.ShamrockConfig
 import moe.RinShiona.Shamrock.utils.PlatformUtils
 import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
+import moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge
+import moe.RinShiona.Shamrock.xposed.helper.QuaBootstrap
+import moe.RinShiona.Shamrock.xposed.helper.RemoteServiceBootstrap
 import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.xposed.helper.internal.DataRequester
 import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
@@ -50,14 +53,15 @@ class PullConfig: IAction {
                     HTTPServer.isServiceStarted = false
                 }
                 XPrefConfigLoader.loadIfAvailable()
+                RemoteServiceBootstrap.apply(MobileQQ.getContext())
                 initAppService(MobileQQ.getContext())
             })
             DynamicReceiver.register("push_config", IPCRequest {
                 ctx.toast("动态推送配置文件成功。")
-                // MIUI may block this broadcast; reload shared prefs directly.
                 if (!XPrefConfigLoader.loadIfAvailable()) {
                     ShamrockConfig.updateConfig(it)
                 }
+                RemoteServiceBootstrap.apply(ctx)
                 // 同步反检测配置
                 moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.apply {
                     enabled = it.getBooleanExtra("anti_detection_enabled", true)
@@ -73,7 +77,14 @@ class PullConfig: IAction {
                     fakeDevice = it.getBooleanExtra("anti_fake_device", true)
                     hookSign = it.getBooleanExtra("anti_hook_sign", true)
                     debugLog = it.getBooleanExtra("anti_debug_log", false)
+                    connectivitySafeMode = it.getBooleanExtra("anti_connectivity_safe", true)
+                    qsecHeavyBypass = it.getBooleanExtra("anti_qsec_heavy", false)
                     qsignServerUrl = it.getStringExtra("anti_qsign_url") ?: "http://127.0.0.1:8080"
+                    if (connectivitySafeMode) {
+                        enabled = true
+                        earlyEnabled = true
+                        useRemoteQSign = false
+                    }
                 }
             })
             DynamicReceiver.register("change_port", IPCRequest {
@@ -126,6 +137,7 @@ class PullConfig: IAction {
             delay(2000)
         }
         XposedBridge.log("Shamrock: config load retries exhausted — starting with cached/default config")
+        XPrefConfigLoader.loadIfAvailable()
         if (!serviceBootstrapped.get()) {
             isConfigOk = true
             initAppService(ctx)
@@ -134,16 +146,24 @@ class PullConfig: IAction {
 
     private fun initAppService(ctx: Context) {
         if (!serviceBootstrapped.compareAndSet(false, true)) return
-        kotlin.runCatching { NativeLoader.load("shamrock") }
-            .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
-        val nativeStatus = safeTestNativeLibrary()
-        XposedBridge.log("Shamrock: native probe => $nativeStatus")
-        if (!nativeStatus.startsWith("Shamrock library not loaded")) {
-            ctx.toast(nativeStatus)
+        if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode) {
+            kotlin.runCatching { NativeLoader.load("shamrock") }
+                .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
+            val nativeStatus = safeTestNativeLibrary()
+            XposedBridge.log("Shamrock: native probe => $nativeStatus")
+            if (!nativeStatus.startsWith("Shamrock library not loaded")) {
+                ctx.toast(nativeStatus)
+            }
+        } else {
+            XposedBridge.log("Shamrock: connectivity-safe — skip legacy shamrock native load")
         }
         ActionLoader.runService(ctx)
-        GlobalScope.launch(Dispatchers.Default) {
-            IpcFetcher.prefetchAll()
+        kotlin.runCatching {
+            QSecContextBridge.installHooks(ctx.classLoader)
+            QuaBootstrap.forceApply(ctx.classLoader, null)
+        }
+        if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode) {
+            GlobalScope.launch(Dispatchers.Default) { IpcFetcher.prefetchAll() }
         }
     }
 }

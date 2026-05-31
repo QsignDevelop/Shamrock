@@ -60,9 +60,12 @@ constexpr const char *kBlocklistDlopen[] = {
 // Path substrings whose readlink/readdir should mask.
 constexpr const char *kBlocklistPathSubstrings[] = {
     "moe.RinShiona.Shamrock",
+    "moe.RinShiona.CherryPop",
     "RinShiona",
+    "CherryPop", "cherrypop",
     "libshamrock",
     "libshamrocknt",
+    "libcherrypopnt",
     "lspd",
     "lsposed",
     nullptr,

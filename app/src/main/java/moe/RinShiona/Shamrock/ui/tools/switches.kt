@@ -22,6 +22,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
@@ -49,8 +50,10 @@ fun IosSwitch(
         MutableInteractionSource()
     }
 
-    var switchClicked by remember {
-        mutableStateOf(switchValue)
+    var switchClicked by remember { mutableStateOf(switchValue) }
+
+    SideEffect {
+        if (switchClicked != switchValue) switchClicked = switchValue
     }
 
     var padding by remember {

@@ -11,8 +11,10 @@ import de.robv.android.xposed.XposedBridge
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.utils.PlatformUtils
 import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
+import moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge
 import moe.RinShiona.Shamrock.xposed.helper.internal.DynamicReceiver
 import mqq.app.MobileQQ
 
@@ -35,10 +37,12 @@ internal class DataReceiver: IAction {
 
         if (PlatformUtils.isMainProcess()) {
             IpcFetcher.initMainProcess()
+            QSecContextBridge.startMainPublisher(ctx.classLoader)
             GlobalUi = Handler(ctx.mainLooper)
             GlobalScope.launch {
                 val intentFilter = IntentFilter()
-                intentFilter.addAction("moe.RinShiona.Shamrock.xqbot.dynamic")
+                intentFilter.addAction(ModuleHide.ACTION_XQBOT_DYNAMIC)
+                intentFilter.addAction("${ModuleHide.LEGACY_PACKAGE}.xqbot.dynamic")
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                     MobileQQ.getMobileQQ().registerReceiver(
                         DynamicReceiver, intentFilter,
@@ -51,7 +55,8 @@ internal class DataReceiver: IAction {
             }
         } else if (PlatformUtils.isMsfProcess()) {
             val intentFilter = IntentFilter()
-            intentFilter.addAction("moe.RinShiona.Shamrock.msf.dynamic")
+            intentFilter.addAction(ModuleHide.ACTION_MSF_DYNAMIC)
+            intentFilter.addAction("${ModuleHide.LEGACY_PACKAGE}.msf.dynamic")
 
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
                 MobileQQ.getMobileQQ().registerReceiver(

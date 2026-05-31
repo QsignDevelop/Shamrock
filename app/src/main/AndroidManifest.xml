@@ -42,7 +42,7 @@
 
         <provider
             android:name=".ui.service.internal.MultifunctionalProvider"
-            android:authorities="moe.RinShiona.Shamrock.xqbot.provider"
+            android:authorities="moe.RinShiona.CherryPop.xqbot.provider"
             android:exported="true"
             android:grantUriPermissions="true"
             tools:ignore="ExportedContentProvider" />
@@ -53,7 +53,7 @@
             android:value="true" />
         <meta-data
             android:name="xposeddescription"
-            android:value="QQ 机器人框架 (OneBot 标准) — 9.2.90 NT 适配版" />
+            android:value="CherryPop — QQ 机器人框架 (OneBot / QSign) 9.2.90 NT" />
         <!-- 93 = minimum LSPosed framework version that supports modern API
              (scope resource, system_server hooks, prefab native). LSPosed
              2.0.2 advertises API 100. Setting to 93 keeps backward compat

@@ -10,6 +10,7 @@ import moe.RinShiona.Shamrock.xposed.actions.ForceTablet
 import moe.RinShiona.Shamrock.xposed.actions.GuidLock
 import moe.RinShiona.Shamrock.xposed.actions.HookForDebug
 import moe.RinShiona.Shamrock.xposed.actions.HookWrapperCodec
+import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 import moe.RinShiona.Shamrock.xposed.actions.IAction
 import moe.RinShiona.Shamrock.xposed.actions.InitRemoteService
 import moe.RinShiona.Shamrock.xposed.actions.IpcService
@@ -27,6 +28,16 @@ object ActionLoader {
         HookForDebug::class,
         FixLibraryLoad::class,
         FetchService::class,
+    )
+
+    private val ACTION_FIRST_SAFE = arrayOf(
+        DataReceiver::class,
+        PullConfig::class,
+        FetchService::class,
+    )
+
+    private val ACTION_SERVICE_SAFE = arrayOf(
+        InitRemoteService::class,
     )
 
     private val ACTION_MSF = arrayOf(
@@ -47,7 +58,7 @@ object ActionLoader {
         return ctor.newInstance() as IAction
     }
 
-    private fun runActions(ctx: Context, actions: Array<KClass<out IAction>>) {
+    private fun runActions(ctx: Context, actions: Array<out KClass<out IAction>>) {
         actions.forEach { actionClass ->
             kotlin.runCatching {
                 newAction(actionClass).invoke(ctx)
@@ -59,7 +70,10 @@ object ActionLoader {
     }
 
     fun runFirst(ctx: Context) {
-        runActions(ctx, ACTION_FIRST_MAIN)
+        runActions(
+            ctx,
+            if (AntiDetectionConfig.connectivitySafeMode) ACTION_FIRST_SAFE else ACTION_FIRST_MAIN,
+        )
     }
 
     fun runMsf(ctx: Context) {
@@ -67,6 +81,9 @@ object ActionLoader {
     }
 
     fun runService(ctx: Context) {
-        runActions(ctx, ACTION_SERVICE)
+        runActions(
+            ctx,
+            if (AntiDetectionConfig.connectivitySafeMode) ACTION_SERVICE_SAFE else ACTION_SERVICE,
+        )
     }
 }

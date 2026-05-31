@@ -6,11 +6,12 @@ import android.os.Build
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import moe.RinShiona.Shamrock.tools.hookMethod
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import java.lang.reflect.Method
 
 internal object FuckAMS {
     private val KeepPackage = arrayOf(
-        "com.tencent.mobileqq", "moe.RinShiona.Shamrock"
+        "com.tencent.mobileqq", ModuleHide.PACKAGE, ModuleHide.LEGACY_PACKAGE,
     )
     private val KeepRecords = arrayListOf<Any>()
     private lateinit var KeepThread: Thread

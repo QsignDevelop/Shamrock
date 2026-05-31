@@ -63,10 +63,41 @@ internal object QSecBypassHooks {
     private const val FEBOUND = "com.tencent.mobileqq.dt.model.FEBound"
 
     private val installed = AtomicBoolean(false)
+    private val liteInstalled = AtomicBoolean(false)
 
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
+        if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.qsecHeavyBypass ||
+            moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode
+        ) {
+            log("heavy QSec bypass skipped (connectivity-safe)")
+            return
+        }
 
+        installHeavy(classLoader)
+    }
+
+    /**
+     * 联网优先：只 neutralize 扫描/上报通道，不碰 execTasks / doSomething / getFeKitAttach（MSF 签名链）。
+     */
+    fun installLite(classLoader: ClassLoader, mainProcess: Boolean) {
+        if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode) return
+        if (!liteInstalled.compareAndSet(false, true)) return
+        neuterDtc(classLoader)
+        neuterDeepSleepDetector(classLoader)
+        neuterMonitorReporter(classLoader)
+        if (mainProcess) {
+            installLiteMain(classLoader)
+        }
+        log("QSec lite bypass installed (main=$mainProcess)")
+    }
+
+    /** Main process only — attach/env scans, not MSF sign path. */
+    fun installLiteMain(classLoader: ClassLoader) {
+        neuterQSecLiteMain(classLoader)
+    }
+
+    private fun installHeavy(classLoader: ClassLoader) {
         neuterQSec(classLoader)
         neuterDtc(classLoader)
         neuterQsecEst(classLoader)
@@ -77,7 +108,41 @@ internal object QSecBypassHooks {
         log("QSec bypass layer installed")
     }
 
-    // -------------------- QSec --------------------
+    /** Main process only — attach/env scans, not sign path. */
+    private fun neuterQSecLiteMain(classLoader: ClassLoader) {
+        val cls = runCatching { classLoader.loadClass(QSEC) }.getOrNull() ?: return
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "getFeKitAttach", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm()
+                    param.result = ByteArray(0)
+                }
+            })
+        }
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "getEstInfo", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = ""
+                }
+            })
+        }
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "initXps", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = 0
+                }
+            })
+        }
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "closeXps", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = null
+                }
+            })
+        }
+    }
+
+    // -------------------- QSec (heavy) --------------------
 
     private fun neuterQSec(classLoader: ClassLoader) {
         val cls = runCatching { classLoader.loadClass(QSEC) }.getOrNull() ?: run {
@@ -85,23 +150,7 @@ internal object QSecBypassHooks {
             return
         }
 
-        // execTasks(Context, int): int — main scan driver; return 0 (success, nothing to do).
-        runCatching {
-            XposedBridge.hookAllMethods(cls, "execTasks", object : XC_MethodReplacement() {
-                override fun replaceHookedMethod(param: MethodHookParam): Any = 0
-            })
-        }.onFailure { log("execTasks hook failed: ${it.message}") }
-
-        // doSomething(Context, int): int — native probe; force 0.
-        // Cannot trivially replace a native method with XC_MethodReplacement when the JNI
-        // binding is already in place; use hookAllMethods which Xposed handles for natives.
-        runCatching {
-            XposedBridge.hookAllMethods(cls, "doSomething", object : XC_MethodHook() {
-                override fun beforeHookedMethod(param: MethodHookParam) {
-                    param.result = 0
-                }
-            })
-        }.onFailure { log("doSomething hook failed: ${it.message}") }
+        // execTasks / doSomething 不能全局短路 — 会破坏 QQ 联网与 QSec 初始化
 
         // doReport(S, S, S, S): int — upload pipe to backend; return 0.
         runCatching {
@@ -169,6 +218,7 @@ internal object QSecBypassHooks {
         runCatching {
             XposedBridge.hookAllMethods(cls, "dtcProcessCall", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    DetectionKillShield.arm()
                     param.result = null
                 }
             })

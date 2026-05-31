@@ -55,6 +55,9 @@ internal object AioListener: IKernelMsgListener {
                     GlobalPusher().forEach {
                         it.pushGroupMsg(record, record.elements, rawMsg, msgHash)
                     }
+                    if (GlobalPusher().isEmpty()) {
+                        LogCenter.log("收到群消息但未注册 OneBot 推送器，请开启 HTTP 回调或 WebSocket", Level.WARN)
+                    }
                 }
                 MsgConstant.KCHATTYPEC2C -> {
                     LogCenter.log("私聊消息(private = ${record.senderUin}, id = $msgHash|${record.msgSeq}, msg = $rawMsg)")
@@ -65,6 +68,9 @@ internal object AioListener: IKernelMsgListener {
 
                     GlobalPusher().forEach {
                         it.pushPrivateMsg(record, record.elements, rawMsg, msgHash)
+                    }
+                    if (GlobalPusher().isEmpty()) {
+                        LogCenter.log("收到私聊消息但未注册 OneBot 推送器，请开启 HTTP 回调或 WebSocket", Level.WARN)
                     }
                 }
                 else -> LogCenter.log("不支持PUSH事件: ${record.chatType}")
@@ -383,8 +389,14 @@ internal object AioListener: IKernelMsgListener {
         LogCenter.log("onSendMsgError($j2, $contact, $j2, $str)", Level.DEBUG)
     }
 
-    override fun onSysMsgNotification(i2: Int, j2: Long, j3: Long, arrayList: ArrayList<Byte>?) {
-        LogCenter.log("onSysMsgNotification($i2, $j2, $j3, $arrayList)", Level.DEBUG)
+    override fun onSysMsgNotification(
+        i2: Int,
+        j2: Long,
+        j3: Long,
+        z: Boolean,
+        arrayList: ArrayList<Byte>?
+    ) {
+        LogCenter.log("onSysMsgNotification($i2, $j2, $j3, $z, $arrayList)", Level.DEBUG)
     }
 
     override fun onTempChatInfoUpdate(tempChatInfo: TempChatInfo?) {

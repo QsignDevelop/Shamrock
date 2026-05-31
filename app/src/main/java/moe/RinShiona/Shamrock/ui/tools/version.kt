@@ -4,6 +4,6 @@ import android.content.Context
 
 fun getShamrockVersion(context: Context): String {
     val packageManager = context.packageManager
-    val packageInfo = packageManager.getPackageInfo("moe.RinShiona.Shamrock", 0)
+    val packageInfo = packageManager.getPackageInfo(context.packageName, 0)
     return packageInfo.versionName
 }

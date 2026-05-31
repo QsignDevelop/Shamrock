@@ -13,7 +13,7 @@ private val LocalStringDefault = Default()
 private val LocalString2B = Chūnibyō()
 
 val RANDOM_TITLE = arrayOf(
-    "Clover", "CuteKitty", "Shamrock",
+    "Clover", "CuteKitty", "CherryPop",
     "Threeleaf", "CuteCat", "FuckingCat",
     "XVideos", "Onlyfans", "Pornhub",
     "Xposed", "LittleFox", "Springboot",
@@ -57,9 +57,10 @@ private open class Chūnibyō: Default() {
     init {
         TitlesWithIcon = arrayOf(
             "玄天" to R.drawable.round_home_24,
+            "签印" to R.drawable.round_api_24,
             "天穹" to R.drawable.round_dashboard_24,
             "无极" to R.drawable.round_monitor_heart_24,
-            "飘渺" to R.drawable.round_logo_dev_24
+            "飘渺" to R.drawable.baseline_security_24,
         )
         frameworkYes = "仙路已通"
         frameworkNo = "鬼怪横行"
@@ -75,9 +76,10 @@ private open class Chūnibyō: Default() {
 private open class Default: VarString(
     TitlesWithIcon = arrayOf(
         "主页" to R.drawable.round_home_24,
-        "状态" to R.drawable.round_dashboard_24,
+        "QSign" to R.drawable.round_api_24,
+        "OneBot" to R.drawable.round_dashboard_24,
         "日志" to R.drawable.round_monitor_heart_24,
-        "Lab" to R.drawable.round_logo_dev_24
+        "设置" to R.drawable.baseline_security_24,
     ), "框架已激活", "框架未激活",
     "已激活", "未激活",
     legalWarning = "该模块仅适用于目标版本8.9.68及以上的版本。\n" +

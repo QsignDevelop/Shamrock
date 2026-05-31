@@ -72,7 +72,7 @@ object ShamrockConfig {
 
     fun isNeko(ctx: Context): Boolean {
         val preferences = ctx.getSharedPreferences("config", 0)
-        return preferences.getBoolean("neko_api", preferences.getBoolean("pro_api", false))
+        return preferences.getBoolean("neko_api", preferences.getBoolean("pro_api", true))
     }
 
     fun setNeko(ctx: Context, v: Boolean) {
@@ -300,6 +300,8 @@ object ShamrockConfig {
             "echo_number" to preferences.getBoolean("echo_number", false),
             // Anti-Detection Config
             "anti_detection_enabled" to preferences.getBoolean("anti_detection_enabled", true),
+            "anti_connectivity_safe" to preferences.getBoolean("anti_connectivity_safe", true),
+            "anti_qsec_heavy" to preferences.getBoolean("anti_qsec_heavy", false),
             "anti_hide_xposed" to preferences.getBoolean("anti_hide_xposed", true),
             "anti_hide_root" to preferences.getBoolean("anti_hide_root", true),
             "anti_hide_magisk" to preferences.getBoolean("anti_hide_magisk", true),
@@ -316,6 +318,10 @@ object ShamrockConfig {
     }
 
     fun pushUpdate(ctx: Context) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit()
+            .putLong("config_revision", System.currentTimeMillis())
+            .commit()
         ctx.broadcastToModule {
             getConfigMap(ctx).forEach { (key, value) ->
                 if (value == null) {
@@ -468,6 +474,17 @@ object ShamrockConfig {
     fun setAntiDebugLog(ctx: Context, v: Boolean) {
         val preferences = ctx.getSharedPreferences("config", 0)
         preferences.edit().putBoolean("anti_debug_log", v).apply()
+        pushUpdate(ctx)
+    }
+
+    fun isAntiConnectivitySafe(ctx: Context): Boolean {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        return preferences.getBoolean("anti_connectivity_safe", true)
+    }
+
+    fun setAntiConnectivitySafe(ctx: Context, v: Boolean) {
+        val preferences = ctx.getSharedPreferences("config", 0)
+        preferences.edit().putBoolean("anti_connectivity_safe", v).apply()
         pushUpdate(ctx)
     }
 

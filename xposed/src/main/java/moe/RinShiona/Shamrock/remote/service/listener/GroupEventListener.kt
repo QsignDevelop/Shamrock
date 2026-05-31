@@ -8,6 +8,7 @@ import com.tencent.qqnt.kernel.nativeinterface.GroupAllInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupDetailInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupListUpdateType
 import com.tencent.qqnt.kernel.nativeinterface.GroupMemberInfoListId
+import com.tencent.qqnt.kernel.nativeinterface.GroupMemberLevelInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupMemberListChangeInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupMsgMaskInfo
 import com.tencent.qqnt.kernel.nativeinterface.GroupNotifyMsg
@@ -85,6 +86,27 @@ internal object GroupEventListener: IKernelGroupListener {
         LogCenter.log("onGroupNotifiesUpdated($z, $arrayList)")
     }
 
+    override fun onGroupNotifiesUpdatedV2(
+        z: Boolean,
+        j2: Long,
+        arrayList: ArrayList<*>?,
+        arrayList2: ArrayList<*>?
+    ) {
+        // QQ 9.2.90 — no-op (also handled by runtime proxy if signature drifts)
+    }
+
+    override fun onGroupExtListUpdate(
+        groupExtListUpdateType: com.tencent.qqnt.kernel.nativeinterface.GroupExtListUpdateType?,
+        arrayList: ArrayList<*>?
+    ) {
+    }
+
+    override fun onGroupMemberNewExtInfoChange(j2: Long, arrayList: ArrayList<*>?) {
+    }
+
+    override fun onGroupSingleScreenNotifiesV2(z: Boolean, j2: Long, arrayList: ArrayList<*>?) {
+    }
+
     override fun onGroupPortraitChange(
         j2: Long,
         arrayList: ArrayList<String>?,
@@ -123,6 +145,14 @@ internal object GroupEventListener: IKernelGroupListener {
 
     override fun onMemberListChange(groupMemberListChangeInfo: GroupMemberListChangeInfo?) {
         LogCenter.log("onMemberListChange($groupMemberListChangeInfo)")
+    }
+
+    override fun onGroupMemberLevelInfoChange(j2: Long, groupMemberLevelInfo: GroupMemberLevelInfo?) {
+        // QQ 9.2.90 — no-op; must exist to avoid native JNI FatalError
+    }
+
+    override fun onGroupAIOSlotInfoChange(arrayList: ArrayList<*>?) {
+        // QQ 9.2.90 — no-op; must exist to avoid native JNI FatalError
     }
 
     override fun onSearchMemberChange(

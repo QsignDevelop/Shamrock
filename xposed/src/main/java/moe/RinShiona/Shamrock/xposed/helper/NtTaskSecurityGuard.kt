@@ -38,6 +38,13 @@ internal object NtTaskSecurityGuard {
     }
 
     private fun onSecurityTask(classLoader: ClassLoader, taskId: String) {
+        if (AntiDetectionConfig.allowLiteAntiDetect()) {
+            if (!preArtTiReady.compareAndSet(false, true)) return
+            log("lite hooks before $taskId")
+            patchBuildTags()
+            EarlyAntiDetection.installLite(classLoader)
+            return
+        }
         if (!preArtTiReady.compareAndSet(false, true)) return
         if (!AntiDetectionConfig.allowEarlyHooks()) return
         log("critical Java hooks before $taskId (no native load)")

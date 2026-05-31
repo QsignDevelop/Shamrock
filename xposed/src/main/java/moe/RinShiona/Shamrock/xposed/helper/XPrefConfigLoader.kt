@@ -5,6 +5,7 @@ import de.robv.android.xposed.XSharedPreferences
 import de.robv.android.xposed.XposedBridge
 import moe.RinShiona.Shamrock.remote.service.config.ShamrockConfig
 import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 
 /**
  * Load Shamrock App settings from LSPosed-shared SharedPreferences.
@@ -14,8 +15,25 @@ import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
  * `config` file the App writes, without cross-app IPC.
  */
 internal object XPrefConfigLoader {
-    private const val MODULE_PKG = "moe.RinShiona.Shamrock"
+    private const val MODULE_PKG = ModuleHide.PACKAGE
     private const val PREF_NAME = "config"
+
+    private var lastRevision = -1L
+
+    /** 当 Shamrock App 修改 config SharedPreferences 后返回 true。 */
+    fun reloadIfChanged(): Boolean {
+        return try {
+            val prefs = XSharedPreferences(MODULE_PKG, PREF_NAME)
+            prefs.reload()
+            if (!prefs.file.canRead()) return false
+            val rev = prefs.getLong("config_revision", prefs.file.lastModified())
+            if (rev == lastRevision && lastRevision >= 0) return false
+            lastRevision = rev
+            loadIfAvailable()
+        } catch (_: Throwable) {
+            false
+        }
+    }
 
     fun loadIfAvailable(): Boolean {
         return try {
@@ -65,13 +83,30 @@ internal object XPrefConfigLoader {
             putExtra("ssl_pwd", prefs.getString("ssl_pwd", ""))
             putExtra("ssl_private_pwd", prefs.getString("ssl_private_pwd", ""))
             putExtra("ssl_alias", prefs.getString("ssl_alias", ""))
+            putExtra("anti_connectivity_safe", prefs.getBoolean("anti_connectivity_safe", true))
+            putExtra("anti_qsec_heavy", prefs.getBoolean("anti_qsec_heavy", false))
+            putExtra("anti_detection_enabled", prefs.getBoolean("anti_detection_enabled", true))
         }
     }
 
     private fun applyAntiDetection(prefs: XSharedPreferences) {
+        val connectivitySafe = prefs.getBoolean("anti_connectivity_safe", true)
         AntiDetectionConfig.apply {
-            enabled = prefs.getBoolean("anti_detection_enabled", true)
-            earlyEnabled = prefs.getBoolean("anti_early_enabled", enabled)
+            connectivitySafeMode = connectivitySafe
+            if (connectivitySafe) {
+                // 联网优先：强制开轻量反检测（防踢号），关 QSec 重度绕过
+                enabled = true
+                earlyEnabled = true
+                qsecHeavyBypass = false
+                hideNetwork = false
+                useRemoteQSign = false
+            } else {
+                enabled = prefs.getBoolean("anti_detection_enabled", false)
+                earlyEnabled = prefs.getBoolean("anti_early_enabled", enabled)
+                qsecHeavyBypass = prefs.getBoolean("anti_qsec_heavy", false)
+                hideNetwork = false
+                useRemoteQSign = prefs.getBoolean("anti_use_remote_qsign", false)
+            }
             hideXposed = prefs.getBoolean("anti_hide_xposed", true)
             hideRoot = prefs.getBoolean("anti_hide_root", true)
             hideMagisk = prefs.getBoolean("anti_hide_magisk", true)
@@ -84,6 +119,25 @@ internal object XPrefConfigLoader {
             hookSign = prefs.getBoolean("anti_hook_sign", true)
             debugLog = prefs.getBoolean("anti_debug_log", false)
             qsignServerUrl = prefs.getString("anti_qsign_url", "http://127.0.0.1:8080") ?: "http://127.0.0.1:8080"
+        }
+        XposedBridge.log(
+            "Shamrock: anti-config connectivitySafe=$connectivitySafe enabled=${AntiDetectionConfig.enabled}",
+        )
+        QSignConfig.apply(
+            signMode = QSignConfig.MODE_MSF,
+            signTraceEnabled = prefs.getBoolean("qsign_sign_trace", false),
+        )
+    }
+
+    fun reloadQSignOnly(): Boolean {
+        return try {
+            val prefs = XSharedPreferences(MODULE_PKG, PREF_NAME)
+            prefs.reload()
+            if (!prefs.file.canRead()) return false
+            applyAntiDetection(prefs)
+            true
+        } catch (e: Throwable) {
+            false
         }
     }
 }

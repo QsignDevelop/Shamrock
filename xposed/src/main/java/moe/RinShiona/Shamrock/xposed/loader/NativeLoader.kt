@@ -2,6 +2,7 @@ package moe.RinShiona.Shamrock.xposed.loader
 
 import android.annotation.SuppressLint
 import de.robv.android.xposed.XposedBridge
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import moe.RinShiona.Shamrock.helper.Level
 import moe.RinShiona.Shamrock.helper.LogCenter
 import mqq.app.MobileQQ
@@ -9,7 +10,7 @@ import java.io.File
 
 internal object NativeLoader {
     private val externalLibPath = MobileQQ.getContext()
-        .getExternalFilesDir(null)!!.parentFile!!.resolve("Tencent/Shamrock/lib")
+        .getExternalFilesDir(null)!!.parentFile!!.resolve("Tencent/CherryPop/lib")
 
     val isVoiceLoaded: Boolean
         get() {
@@ -28,7 +29,7 @@ internal object NativeLoader {
                 if (isInitShamrock) return
                 val context = MobileQQ.getContext()
                 val packageManager = context.packageManager
-                val applicationInfo = packageManager.getApplicationInfo("moe.RinShiona.Shamrock", 0)
+                val applicationInfo = packageManager.getApplicationInfo(ModuleHide.PACKAGE, 0)
                 val file = File(applicationInfo.nativeLibraryDir)
                 LogCenter.log("LoadLibrary(name = $name)")
                 System.load(file.resolve("lib$name.so").absolutePath)

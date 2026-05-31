@@ -53,13 +53,23 @@ internal object ModuleHideHooks {
         listOf(
             "getLibraryList",
             "getPluginInfo",
-            "getPropSafe",
             "mmKVValue",
             "mmQsecKVValue",
             "systemGetSafe",
             "dtcProcessCall",
         ).forEach { method ->
             hookSanitizeStringReturn(dtc, method)
+        }
+
+        runCatching {
+            XposedBridge.hookAllMethods(dtc, "getPropSafe", object : XC_MethodHook() {
+                override fun afterHookedMethod(param: MethodHookParam) {
+                    val key = param.args.firstOrNull() as? String
+                    val raw = param.result as? String ?: return
+                    param.result = ModuleHide.sanitizeBootloaderProp(key, raw)
+                        ?: ModuleHide.sanitizeValue(raw) ?: raw
+                }
+            })
         }
 
         // dtcBL(byte[]) -> String[] blacklist from QSec channel

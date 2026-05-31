@@ -17,7 +17,8 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.MutableIntState
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.MutableState
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
@@ -105,6 +106,9 @@ private fun StatusCardBoard(
     version: MutableState<String>,
     core: MutableState<String>
 ) {
+    val active by isRight
+    val coreVer by version
+    val coreLabel by core
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -124,7 +128,7 @@ private fun StatusCardBoard(
                 .width(20.dp)
                 .height(20.dp),
             painter = painterResource(
-                id = if (isRight.value) R.drawable.round_near_me_24 else
+                id = if (active) R.drawable.round_near_me_24 else
                     R.drawable.round_near_me_disabled_24
             ),
             contentDescription = "StatusIcon",
@@ -138,12 +142,12 @@ private fun StatusCardBoard(
             horizontalAlignment = Alignment.Start,
         ) {
             Text(
-                text = if (isRight.value) LocalString.frameworkYesLite else LocalString.frameworkNoLite,
+                text = if (active) LocalString.frameworkYesLite else LocalString.frameworkNoLite,
                 color = Color.White,
                 fontSize = 14.sp
             )
             Text(
-                text = "${version.value} - ${core.value}",
+                text = "$coreVer - $coreLabel",
                 color = Color.White,
                 fontSize = 14.sp
             )

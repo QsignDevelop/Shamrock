@@ -58,6 +58,23 @@ std::atomic<bool> g_initialized{false};
 
 extern "C" __attribute__((visibility("default"))) JNIEXPORT
 jboolean JNICALL
+Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeInitAntiDetectOnly(
+        JNIEnv *env, jclass /*self*/) {
+    if (g_initialized.exchange(true)) {
+        LOGI("nativeInitAntiDetectOnly: already initialized — noop");
+        return JNI_TRUE;
+    }
+    LOGI("nativeInitAntiDetectOnly: anti-detect + hide only (no sign)");
+
+    int rc2 = shamrock_anti_detect_init(env);
+    int rc3 = shamrock_hide_init(env);
+
+    LOGI("nativeInitAntiDetectOnly: anti=%d hide=%d", rc2, rc3);
+    return (rc2 == 0 && rc3 == 0) ? JNI_TRUE : JNI_FALSE;
+}
+
+extern "C" __attribute__((visibility("default"))) JNIEXPORT
+jboolean JNICALL
 Java_moe_RinShiona_Shamrock_xposed_ipc_impl_ShamrockNative_nativeInit(
         JNIEnv *env, jclass /*self*/) {
     if (g_initialized.exchange(true)) {

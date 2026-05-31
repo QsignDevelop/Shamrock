@@ -29,6 +29,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 internal object HookEvasion {
 
     private val installed = AtomicBoolean(false)
+    private val stackTraceScrubbing = ThreadLocal.withInitial { false }
 
     private val HOOK_FRAME_KEYWORDS = listOf(
         "de.robv.android.xposed",
@@ -38,10 +39,15 @@ internal object HookEvasion {
         "LSPHooker",
         "org.lsposed",
         "org.lsposd",
-        "moe.RinShiona.Shamrock",
-        "moe.fuqiuluo.shamrock",
+        ModuleHide.PACKAGE,
+        ModuleHide.LEGACY_PACKAGE,
+        "RinShiona.Shamrock",
+        "RinShiona.CherryPop",
+        "CherryPop",
         "Shamrock.xposed",
-        "libshamrocknt",
+        ModuleHide.NATIVE_LIB,
+        ModuleHide.LEGACY_NATIVE_LIB,
+        "libcherrypopnt",
         "\$XC_MethodHook",
     )
 
@@ -49,14 +55,52 @@ internal object HookEvasion {
         if (!installed.compareAndSet(false, true)) return
 
         scrubStackTraces()
-        scrubReflectionEnumeration()
         scrubResourceEnumeration(classLoader)
         scrubBuildTags()
         scrubSystemProperties(classLoader)
         scrubDebugProbes()
         scrubShellProbes()
 
-        log("hook-evasion layer installed")
+        log("hook-evasion layer installed (core)")
+    }
+
+    /** After QQ Application clinit — stack/log scrub only; do not hook Class.forName (breaks QRoute). */
+    fun installDeferred(classLoader: ClassLoader) {
+        log("hook-evasion deferred layer installed (no Class.forName hooks)")
+    }
+
+    private fun scrubClassForName() {
+        val block = object : XC_MethodHook() {
+            override fun beforeHookedMethod(param: MethodHookParam) {
+                if (!ModuleHide.isSecurityScannerCaller()) return
+                val name = param.args.firstOrNull() as? String ?: return
+                if (isSensitiveClassName(name)) {
+                    param.throwable = ClassNotFoundException(name)
+                }
+            }
+        }
+        runCatching { XposedBridge.hookAllMethods(Class::class.java, "forName", block) }
+        runCatching {
+            XposedBridge.hookAllMethods(ClassLoader::class.java, "loadClass", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
+                    val name = param.args.firstOrNull() as? String ?: return
+                    if (isSensitiveClassName(name)) {
+                        param.throwable = ClassNotFoundException(name)
+                    }
+                }
+            })
+        }
+    }
+
+    private fun isSensitiveClassName(name: String): Boolean {
+        val n = name.lowercase()
+        return n.contains("de.robv.android.xposed") ||
+            n.contains("org.lsposed") ||
+            n.contains("xposedbridge") ||
+            n.contains("rinshiona.shamrock") ||
+            n.contains("rinshiona.cherrypop") ||
+            n.contains("cherrypop")
     }
 
     // ---------------- 1. Stack traces ----------------
@@ -64,33 +108,43 @@ internal object HookEvasion {
     private fun scrubStackTraces() {
         val filter = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
-                if (!ModuleHide.isSecurityScannerCaller()) return
-                val frames = param.result as? Array<*> ?: return
-                @Suppress("UNCHECKED_CAST")
-                param.result = filterStackFrames(frames as Array<StackTraceElement?>)
+                if (stackTraceScrubbing.get()) return
+                stackTraceScrubbing.set(true)
+                try {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
+                    val frames = param.result as? Array<*> ?: return
+                    @Suppress("UNCHECKED_CAST")
+                    param.result = filterStackFrames(frames as Array<StackTraceElement?>)
+                } finally {
+                    stackTraceScrubbing.set(false)
+                }
             }
         }
 
         runCatching {
             XposedBridge.hookAllMethods(Throwable::class.java, "getStackTrace", filter)
         }
-        // NOTE: deliberately NOT hooking Thread.getStackTrace — KillGuardHooks
-        // relies on it to detect Shamrock-induced kills via stack walk. Hooking
-        // it here would recursively filter our own frames out and break that
-        // detection. QQ's hook-frame probes mostly go through Throwable anyway
-        // (Log.getStackTraceString(new Throwable()) pattern in detection_scan).
+        runCatching {
+            XposedBridge.hookAllMethods(Thread::class.java, "getStackTrace", filter)
+        }
         runCatching {
             XposedBridge.hookAllMethods(Thread::class.java, "getAllStackTraces", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
-                    if (!ModuleHide.isSecurityScannerCaller()) return
-                    val map = param.result as? Map<*, *> ?: return
-                    val out = HashMap<Any?, Any?>(map.size)
-                    for ((k, v) in map) {
-                        val frames = v as? Array<*> ?: continue
-                        @Suppress("UNCHECKED_CAST")
-                        out[k] = filterStackFrames(frames as Array<StackTraceElement?>)
+                    if (stackTraceScrubbing.get()) return
+                    stackTraceScrubbing.set(true)
+                    try {
+                        if (!ModuleHide.isSecurityScannerCaller()) return
+                        val map = param.result as? Map<*, *> ?: return
+                        val out = HashMap<Any?, Any?>(map.size)
+                        for ((k, v) in map) {
+                            val frames = v as? Array<*> ?: continue
+                            @Suppress("UNCHECKED_CAST")
+                            out[k] = filterStackFrames(frames as Array<StackTraceElement?>)
+                        }
+                        param.result = out
+                    } finally {
+                        stackTraceScrubbing.set(false)
                     }
-                    param.result = out
                 }
             })
         }
@@ -202,6 +256,18 @@ internal object HookEvasion {
         "persist.sys.usb.config" to "none",
         "persist.service.adb.enable" to "0",
         "persist.service.debuggable" to "0",
+        "ro.build.selinux" to "1",
+        "ro.kernel.qemu" to "0",
+        "ro.hardware.virt" to "",
+        "persist.sys.root_access" to "0",
+        "ro.boot.secureboot" to "1",
+        "ro.secureboot.lockstate" to "locked",
+        "ro.boot.secboot" to "enabled",
+        "ro.bootloader.locked" to "1",
+        "ro.bootloader_unlocked" to "0",
+        "sys.oem_unlock_allowed" to "0",
+        "oem_unlock_allowed" to "0",
+        "ro.oem_unlock_supported" to "0",
     )
 
     private fun scrubSystemProperties(classLoader: ClassLoader) {
@@ -214,8 +280,11 @@ internal object HookEvasion {
         runCatching {
             XposedBridge.hookAllMethods(cls, "get", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val key = param.args.getOrNull(0) as? String ?: return
-                    val safe = PROP_SAFE_DEFAULTS[key] ?: return
+                    val safe = PROP_SAFE_DEFAULTS[key]
+                        ?: ModuleHide.sanitizeBootloaderProp(key, null)
+                        ?: return
                     param.result = safe
                 }
             })
@@ -223,6 +292,7 @@ internal object HookEvasion {
         runCatching {
             XposedBridge.hookAllMethods(cls, "getBoolean", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val key = param.args.getOrNull(0) as? String ?: return
                     val safe = PROP_SAFE_DEFAULTS[key] ?: return
                     param.result = when (safe.lowercase()) {
@@ -235,6 +305,7 @@ internal object HookEvasion {
         runCatching {
             XposedBridge.hookAllMethods(cls, "getInt", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
+                    if (!ModuleHide.isSecurityScannerCaller()) return
                     val key = param.args.getOrNull(0) as? String ?: return
                     val safe = PROP_SAFE_DEFAULTS[key]?.toIntOrNull() ?: return
                     param.result = safe
@@ -271,6 +342,7 @@ internal object HookEvasion {
     private fun scrubShellProbes() {
         val cmdHook = object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
+                if (!ModuleHide.isSecurityScannerCaller()) return
                 val cmd = extractCmd(param.args) ?: return
                 if (isDangerousCmd(cmd)) {
                     log("blocked shell: ${cmd.take(120)}")
@@ -281,6 +353,7 @@ internal object HookEvasion {
         runCatching { XposedBridge.hookAllMethods(Runtime::class.java, "exec", cmdHook) }
         runCatching { XposedBridge.hookAllMethods(ProcessBuilder::class.java, "start", object : XC_MethodHook() {
             override fun beforeHookedMethod(param: MethodHookParam) {
+                if (!ModuleHide.isSecurityScannerCaller()) return
                 val pb = param.thisObject as? ProcessBuilder ?: return
                 val cmd = runCatching { pb.command().joinToString(" ") }.getOrNull() ?: return
                 if (isDangerousCmd(cmd)) {

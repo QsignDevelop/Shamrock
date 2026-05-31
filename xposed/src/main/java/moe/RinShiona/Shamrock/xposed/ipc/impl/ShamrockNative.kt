@@ -2,6 +2,7 @@ package moe.RinShiona.Shamrock.xposed.ipc.impl
 
 import android.content.Context
 import de.robv.android.xposed.XposedBridge
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide
 import java.io.File
 
 /**
@@ -13,9 +14,9 @@ import java.io.File
  */
 internal object ShamrockNative {
 
-    private const val LIB_NT = "shamrocknt"
+    private const val LIB_NT = ModuleHide.NATIVE_LIB
     private const val LIB_SHADOW = "shadowhook"
-    private const val MODULE_PKG = "moe.RinShiona.Shamrock"
+    private const val MODULE_PKG = ModuleHide.PACKAGE
 
     @JvmStatic
     var libraryLoaded: Boolean = false
@@ -25,16 +26,40 @@ internal object ShamrockNative {
     var initialized: Boolean = false
         private set
 
+    /** 完整 nativeInit（含 sign/energy）；anti-detect-only 时为 false。 */
+    @JvmStatic
+    var signNativeReady: Boolean = false
+        private set
+
     @Synchronized
-    fun bootstrap(hostCtx: Context? = null): Boolean {
+    fun bootstrapAntiDetectOnly(hostCtx: Context? = null): Boolean {
         if (initialized) return true
         if (!libraryLoaded) {
             libraryLoaded = loadNativeLibraries(hostCtx)
             if (!libraryLoaded) return false
         }
         return try {
+            initialized = nativeInitAntiDetectOnly()
+            signNativeReady = false
+            XposedBridge.log("[ShamrockNative] nativeInitAntiDetectOnly() => $initialized signReady=false")
+            initialized
+        } catch (e: Throwable) {
+            XposedBridge.log("[ShamrockNative] nativeInitAntiDetectOnly threw: ${e.message}")
+            false
+        }
+    }
+
+    @Synchronized
+    fun bootstrap(hostCtx: Context? = null): Boolean {
+        if (initialized && signNativeReady) return true
+        if (!libraryLoaded) {
+            libraryLoaded = loadNativeLibraries(hostCtx)
+            if (!libraryLoaded) return false
+        }
+        return try {
             initialized = nativeInit()
-            XposedBridge.log("[ShamrockNative] nativeInit() => $initialized")
+            signNativeReady = initialized
+            XposedBridge.log("[ShamrockNative] nativeInit() => $initialized signReady=$signNativeReady")
             initialized
         } catch (e: Throwable) {
             XposedBridge.log("[ShamrockNative] nativeInit threw: ${e.message}")
@@ -167,7 +192,7 @@ internal object ShamrockNative {
         seqBytes: ByteArray,
         uin: String
     ): Any? {
-        if (!initialized) return null
+        if (!signNativeReady) return null
         return try {
             nativeGetSign(qua, cmd, buffer, seqBytes, uin)
         } catch (e: Throwable) {
@@ -177,7 +202,7 @@ internal object ShamrockNative {
     }
 
     fun energy(data: String, salt: ByteArray): ByteArray? {
-        if (!initialized) return null
+        if (!signNativeReady) return null
         return try {
             nativeEnergy(data, salt)
         } catch (e: Throwable) {
@@ -196,6 +221,7 @@ internal object ShamrockNative {
         }
     }
 
+    @JvmStatic external fun nativeInitAntiDetectOnly(): Boolean
     @JvmStatic external fun nativeInit(): Boolean
     @JvmStatic external fun nativeOnLibFeKitLoaded()
     @JvmStatic external fun nativeCheckStatus(): String

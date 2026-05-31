@@ -20,7 +20,7 @@ android {
     compileSdk = 34
 
     defaultConfig {
-        applicationId = "moe.RinShiona.Shamrock"
+        applicationId = "moe.RinShiona.CherryPop"
         minSdk = 24
         targetSdk = 33
         versionCode = (System.currentTimeMillis() / 1000).toInt()
@@ -56,7 +56,7 @@ android {
                     "x64" -> "x86_64"
                     else -> abi
                 }
-                it.outputFileName = "Shamrock-v${versionName}-${abiName}.apk"
+                it.outputFileName = "CherryPop-v${versionName}-${abiName}.apk"
             }
     }
 

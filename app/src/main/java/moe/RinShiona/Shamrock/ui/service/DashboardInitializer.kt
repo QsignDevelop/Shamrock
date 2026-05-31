@@ -17,9 +17,10 @@ import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.Json
 import moe.RinShiona.Shamrock.remote.entries.CommonResult
-import moe.RinShiona.Shamrock.remote.entries.CurrentAccount
+import moe.RinShiona.Shamrock.remote.entries.StdAccount
 import moe.RinShiona.Shamrock.remote.entries.Status
 import moe.RinShiona.Shamrock.tools.GlobalClient
+import moe.RinShiona.Shamrock.ui.app.AppRuntime
 import moe.RinShiona.Shamrock.ui.app.AppRuntime.AccountInfo
 import moe.RinShiona.Shamrock.ui.app.AppRuntime.log
 import moe.RinShiona.Shamrock.ui.app.AppRuntime.state
@@ -37,6 +38,15 @@ object DashboardInitializer {
     operator fun invoke(context: Context, port: Int) {
         servicePort = port
         initHeartbeat(true, context)
+        checkService(context)
+    }
+
+    /** Re-run status probe immediately (e.g. when returning to the app). */
+    fun refresh(context: Context) {
+        if (servicePort <= 0) {
+            servicePort = ShamrockConfig.getHttpPort(context)
+        }
+        checkService(context)
     }
 
     private fun initHeartbeat(reload: Boolean, context: Context) {
@@ -52,17 +62,18 @@ object DashboardInitializer {
     }
 
     private fun checkService(context: Context) {
+        if (!AppRuntime.isInit) return
         GlobalScope.launch {
             try {
                 GlobalClient.get {
-                    url("http://127.0.0.1:$servicePort/get_account_info")
+                    url("http://127.0.0.1:$servicePort/get_login_info")
                     val token = ShamrockConfig.getToken(context)
                     if (token.isNotBlank()) {
                         header("Authorization", "Bearer $token")
                     }
                 }.let {
                     if (it.status == HttpStatusCode.OK) {
-                        val result: CommonResult<CurrentAccount> = Json.decodeFromString(it.bodyAsText())
+                        val result: CommonResult<StdAccount> = Json.decodeFromString(it.bodyAsText())
                         state.isFined.value = result.retcode == 0
                         if (result.retcode == Status.InternalHandlerError.code) {
                             log("账号未登录。", Level.WARN)
@@ -70,7 +81,7 @@ object DashboardInitializer {
                             log("尝试从接口获取账号信息失败，未知错误。", Level.ERROR)
                         } else {
                             AccountInfo.let { account ->
-                                account.uin.value = result.data.uin.toString()
+                                account.uin.value = result.data.userId.toString()
                                 account.nick.value = result.data.nick
                             }
                         }

@@ -34,6 +34,18 @@ internal abstract class WebSocketPushServlet(
 ) : BasePushServlet, WebSocketServer(InetSocketAddress(port)) {
     protected val eventReceivers: MutableList<WebSocket> = Collections.synchronizedList(mutableListOf<WebSocket>())
 
+    init {
+        isReuseAddr = true
+    }
+
+    override fun run() {
+        try {
+            super.run()
+        } catch (e: Throwable) {
+            LogCenter.log("WSServer thread exit: ${e.message}", Level.ERROR)
+        }
+    }
+
     override val address: String
         get() = "-"
 
@@ -100,7 +112,11 @@ internal abstract class WebSocketPushServlet(
         respond?.let { conn.send(it) }
     }
 
-    override fun onError(conn: WebSocket, ex: Exception?) {
+    override fun onError(conn: WebSocket?, ex: Exception?) {
+        if (conn == null) {
+            LogCenter.log("WSServer setup error: ${ex?.message}", Level.ERROR)
+            return
+        }
         LogCenter.log("WSServer Error: " + ex?.stackTraceToString(), Level.ERROR)
         GlobalPusher.unregister(this)
     }

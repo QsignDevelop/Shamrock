@@ -48,8 +48,10 @@ internal object HTTPServer {
         contentNegotiation()
         statusPages()
         routing {
+            // QSign / unidbg 始终可用，不依赖 Neko 总开关
+            qsignHome()
+            qsign()
             if (ShamrockConfig.isNeko()) {
-                qsignHome()
                 echoActionPost()
             } else {
                 echoVersion()
@@ -68,7 +70,6 @@ internal object HTTPServer {
             otherAction()
             guildAction()
             if (ShamrockConfig.isNeko()) {
-                qsign()
                 obtainProtocolData()
             }
         }

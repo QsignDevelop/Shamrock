@@ -5,6 +5,7 @@ import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
 import java.util.concurrent.atomic.AtomicBoolean
+import moe.RinShiona.Shamrock.xposed.AntiDetectionConfig
 
 /**
  * Block QQ QSec / Guard / startup-task driven process suicide.
@@ -12,6 +13,14 @@ import java.util.concurrent.atomic.AtomicBoolean
  */
 internal object KillGuardHooks {
     private val installed = AtomicBoolean(false)
+    /** 联网优先冷启动窗口：ArtTiHook / GuardInit 阶段更积极拦截自杀。 */
+    @Volatile
+    private var liteColdStartUntilMs: Long = 0L
+
+    fun enableLiteColdStartWindow(durationMs: Long = 120_000L) {
+        val until = System.currentTimeMillis() + durationMs
+        if (until > liteColdStartUntilMs) liteColdStartUntilMs = until
+    }
 
     fun install(classLoader: ClassLoader) {
         if (!installed.compareAndSet(false, true)) return
@@ -49,7 +58,9 @@ internal object KillGuardHooks {
     private fun isShamrockInducedStack(): Boolean {
         return currentStack().any { frame ->
             val cn = frame.className
-            cn.contains("moe.RinShiona.Shamrock", ignoreCase = true) ||
+            cn.contains(ModuleHide.PACKAGE, ignoreCase = true) ||
+                cn.contains(ModuleHide.LEGACY_PACKAGE, ignoreCase = true) ||
+                cn.contains("CherryPop", ignoreCase = true) ||
                 cn.contains("Shamrock", ignoreCase = true) ||
                 cn.contains("NativeLoader", ignoreCase = true) ||
                 cn.contains("PullConfig", ignoreCase = true) ||
@@ -73,6 +84,13 @@ internal object KillGuardHooks {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val pid = param.args.getOrNull(0) as? Int ?: return
                         if (pid != Process.myPid() && pid != 0) return
+                        if (AntiDetectionConfig.allowLiteAntiDetect() &&
+                            System.currentTimeMillis() < liteColdStartUntilMs
+                        ) {
+                            log("blocked Process.killProcess($pid) — lite cold-start")
+                            param.result = null
+                            return
+                        }
                         if (!shouldBlock()) return
                         log("blocked Process.killProcess($pid)")
                         param.result = null
@@ -175,6 +193,12 @@ internal object KillGuardHooks {
      * Do not blanket-block during cold start — that leaves a broken process on white screen.
      */
     private fun shouldBlock(): Boolean {
+        if (AntiDetectionConfig.allowLiteAntiDetect() &&
+            System.currentTimeMillis() < liteColdStartUntilMs &&
+            (isSecurityStack() || isTencentDetectionStack())
+        ) {
+            return true
+        }
         if (isShamrockInducedStack()) return true
         if (!DetectionKillShield.isArmed()) return false
         return isSecurityStack() || isTencentDetectionStack()

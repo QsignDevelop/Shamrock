@@ -26,8 +26,10 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.MutableState
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -54,25 +56,154 @@ import moe.RinShiona.Shamrock.ui.theme.ThemeColor
 import moe.RinShiona.Shamrock.ui.tools.InputDialog
 
 @Composable
-fun DashboardFragment(
-    nick: String,
-    uin: String
-) {
-    val scope = rememberCoroutineScope()
-    val ctx = LocalContext.current
+fun DashboardFragment(nick: String, uin: String) = QSignPage(nick, uin)
 
+@Composable
+internal fun QSignPage(nick: String, uin: String) {
+    val ctx = LocalContext.current
     Column(
         modifier = Modifier
             .fillMaxSize()
             .verticalScroll(rememberScrollState())
-            .padding(16.dp)
+            .padding(16.dp),
     ) {
         AccountCard(nick, uin)
         InformationCard(ctx)
         APIInfoCard(ctx)
-        FunctionCard(scope, ctx, "功能设置")
+        NekoModeCard(ctx)
+    }
+}
+
+@Composable
+internal fun OneBotPage() {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
+        FunctionCard(scope, ctx, "OneBot 协议")
+        APIInfoCard(ctx)
+    }
+}
+
+@Composable
+internal fun SettingsPage() {
+    val scope = rememberCoroutineScope()
+    val ctx = LocalContext.current
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .verticalScroll(rememberScrollState())
+            .padding(16.dp),
+    ) {
         AntiDetectionCard(scope, ctx)
+        SignExtraDecoderCard()
         SSLCard(ctx)
+        LabSettingsSection(ctx)
+    }
+}
+
+@Composable
+private fun NekoModeCard(ctx: Context) {
+    ActionBox(
+        modifier = Modifier.padding(top = 12.dp),
+        painter = painterResource(id = R.drawable.round_api_24),
+        title = "QSign / Neko",
+    ) {
+        Column {
+            Divider(color = GlobalColor.Divider, thickness = 0.2.dp)
+            Function(
+                title = "Neko 模式 🐾",
+                desc = "开启 QSign HTTP 接口（真机原生 Sign）",
+                descColor = Color(0xFFFF6BA8),
+                isSwitch = ShamrockConfig.isNeko(ctx),
+            ) {
+                ShamrockConfig.setNeko(ctx, it)
+                AppRuntime.log("Neko 模式 = $it", Level.WARN)
+                return@Function true
+            }
+        }
+    }
+}
+
+@Composable
+private fun SignExtraDecoderCard() {
+    val ctx = LocalContext.current
+    val input = remember { mutableStateOf("") }
+    val output = remember {
+        mutableStateOf("粘贴 sign extra 十六进制，例如：\n0131108202000000006f00000000")
+    }
+    ActionBox(
+        modifier = Modifier.padding(top = 12.dp),
+        painter = painterResource(id = R.drawable.round_info_24),
+        title = "Sign Extra 检测位解码",
+    ) {
+        Column {
+            Divider(color = GlobalColor.Divider, thickness = 0.2.dp)
+            TextItem(
+                title = "Extra Hex",
+                desc = "14 字节头 + 可选 tail，空格可省略",
+                text = input,
+                hint = "0131108202000000006f00000000",
+                error = "请输入合法 hex",
+                checker = { it.matches(Regex("^[0-9a-fA-F\\s]+$")) && it.replace(" ", "").length >= 28 },
+                confirm = {
+                    output.value = decodeSignExtraLocal(input.value.replace(" ", ""))
+                    Toast.makeText(ctx, "解码完成", Toast.LENGTH_SHORT).show()
+                },
+            )
+            Text(
+                text = output.value,
+                fontSize = 11.sp,
+                color = GlobalColor.NoticeBoxText,
+                modifier = Modifier.padding(12.dp),
+            )
+        }
+    }
+}
+
+private fun decodeSignExtraLocal(hex: String): String {
+    val data = runCatching {
+        hex.chunked(2).map { it.toInt(16).toByte() }.toByteArray()
+    }.getOrElse { return "hex 解析失败" }
+    if (data.size < 14) return "至少需要 14 字节"
+    val sb = StringBuilder()
+    sb.appendLine("raw: ${data.take(14).joinToString(" ") { "%02x".format(it) }}")
+    sb.appendLine("header: ${if (data[0] == 0x01.toByte() && data[1] == 0x31.toByte()) "OK" else "INVALID"}")
+    sb.appendLine("detected: ${data[2] != 0.toByte() || data[3] != 0.toByte() || data[4] != 0.toByte() || (data[9].toInt() and 0x40) != 0 || data[10] == 0.toByte()}")
+    sb.appendLine("byte[2] hook probe = 0x${"%02x".format(data[2])}")
+    sb.appendLine("byte[3] env probe  = 0x${"%02x".format(data[3])}")
+    sb.appendLine("byte[4] root probe  = 0x${"%02x".format(data[4])}")
+    sb.appendLine("byte[9] native bit6  = ${(data[9].toInt() and 0x40) != 0}")
+    sb.appendLine("byte[10] clean marker = ${data[10] == 0x02.toByte()} (0x${"%02x".format(data[10])})")
+    return sb.toString().trimEnd()
+}
+
+@Composable
+private fun LabSettingsSection(ctx: Context) {
+    ActionBox(
+        modifier = Modifier.padding(top = 12.dp),
+        painter = painterResource(id = R.drawable.round_logo_dev_24),
+        title = "实验室",
+    ) {
+        Column {
+            Divider(color = GlobalColor.Divider, thickness = 0.2.dp)
+            Function(title = "自动检测JNI类", desc = "用于修复 Unidbg", isSwitch = ShamrockConfig.isAutoDetectJNI(ctx)) {
+                ShamrockConfig.setAutoDetectJNI(ctx, it); return@Function true
+            }
+            Function(title = "自动检测Natives", isSwitch = ShamrockConfig.isAutoDetectNatives(ctx)) {
+                ShamrockConfig.setAutoDetectNatives(ctx, it); return@Function true
+            }
+            Function(title = "自动检测o3环境", isSwitch = ShamrockConfig.isAutoDetectO3Env(ctx)) {
+                ShamrockConfig.setAutoDetectO3Env(ctx, it); return@Function true
+            }
+            Function(title = "自动检测完整环境组包", isSwitch = ShamrockConfig.isAutoDetectEnvPack(ctx)) {
+                ShamrockConfig.setAutoDetectEnvPack(ctx, it); return@Function true
+            }
+        }
     }
 }
 
@@ -186,7 +317,7 @@ private fun APIInfoCard(
     ActionBox(
         modifier = Modifier.padding(top = 12.dp),
         painter = painterResource(id = R.drawable.round_info_24),
-        title = "接口信息(双击修改)"
+        title = "接口信息（点击编辑）"
     ) {
         Column {
             Divider(
@@ -313,9 +444,19 @@ private fun AntiDetectionCard(
             )
 
             Function(
-                title = "启用反检测",
-                desc = "总开关：关闭后跳过 Java/Native 反检测注入。",
-                isSwitch = ShamrockConfig.isAntiDetectionEnabled(ctx)
+                title = "联网优先模式",
+                desc = "推荐：轻量反检测防踢号 + 保留 QQ 联网；不启用 QSec 重度绕过。",
+                descColor = Color(0xFFFF6BA8),
+                isSwitch = ShamrockConfig.isAntiConnectivitySafe(ctx),
+            ) {
+                ShamrockConfig.setAntiConnectivitySafe(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "启用反检测（完整）",
+                desc = "关闭联网优先后生效；含 Dtc/Pandora 深度隐藏。",
+                isSwitch = ShamrockConfig.isAntiDetectionEnabled(ctx),
             ) {
                 ShamrockConfig.setAntiDetectionEnabled(ctx, it)
                 return@Function true
@@ -355,9 +496,18 @@ private fun AntiDetectionCard(
 
             Function(
                 title = "隐藏系统属性",
-                isSwitch = ShamrockConfig.isAntiHideProps(ctx)
+                isSwitch = ShamrockConfig.isAntiHideProps(ctx),
             ) {
                 ShamrockConfig.setAntiHideProps(ctx, it)
+                return@Function true
+            }
+
+            Function(
+                title = "隐藏模拟器特征",
+                desc = "伪装 Build/系统属性，使 QQ 难以识别模拟器环境。",
+                isSwitch = ShamrockConfig.isAntiHideEmulator(ctx),
+            ) {
+                ShamrockConfig.setAntiHideEmulator(ctx, it)
                 return@Function true
             }
 
@@ -383,7 +533,7 @@ private fun AntiDetectionCard(
 
 @Composable
 private fun FunctionCard(
-    scope: CoroutineScope,
+    @Suppress("UNUSED_PARAMETER") scope: CoroutineScope,
     ctx: Context,
     title: String
 ) {
@@ -438,59 +588,11 @@ private fun FunctionCard(
             Function(
                 title = "被动WebSocket",
                 desc = "OneBot标准WebSocket，Shamrock作为Client。",
-                isSwitch = ShamrockConfig.isWsClient(ctx)
+                isSwitch = ShamrockConfig.isWsClient(ctx),
             ) {
                 ShamrockConfig.setWsClient(ctx, it)
                 return@Function true
             }
-
-            Function(
-                title = "Neko 模式 🐾",
-                desc = "开启 QSign 接口喵~ 不知道这是啥的话先别开哦",
-                descColor = Color.Red,
-                isSwitch = ShamrockConfig.isNeko(ctx)
-            ) {
-                ShamrockConfig.setNeko(ctx, it)
-                AppRuntime.log("Neko 模式 = $it", Level.WARN)
-                return@Function true
-            }
-        }
-        
-        // 自动检测配置（用于修复Unidbg）
-        Function(
-            title = "自动检测JNI类",
-            desc = "自动检测QQ加载的JNI类，用于修复Unidbg",
-            isSwitch = ShamrockConfig.isAutoDetectJNI(ctx)
-        ) {
-            ShamrockConfig.setAutoDetectJNI(ctx, it)
-            return@Function true
-        }
-        
-        Function(
-            title = "自动检测Natives",
-            desc = "自动检测QQ加载的Native库",
-            isSwitch = ShamrockConfig.isAutoDetectNatives(ctx)
-        ) {
-            ShamrockConfig.setAutoDetectNatives(ctx, it)
-            return@Function true
-        }
-        
-        Function(
-            title = "自动检测o3环境",
-            desc = "自动检测o3环境组包方法",
-            isSwitch = ShamrockConfig.isAutoDetectO3Env(ctx)
-        ) {
-            ShamrockConfig.setAutoDetectO3Env(ctx, it)
-            return@Function true
-        }
-        
-        Function(
-            title = "自动检测完整环境组包",
-            desc = "Hook FEKit获取完整参数和返回值，最详细版本",
-            isSwitch = ShamrockConfig.isAutoDetectEnvPack(ctx)
-        ) {
-            ShamrockConfig.setAutoDetectEnvPack(ctx, it)
-            return@Function true
         }
     }
 }
@@ -503,6 +605,9 @@ private fun Function(
     isSwitch: Boolean,
     onClick: (Boolean) -> Boolean
 ) {
+    val ctx = LocalContext.current
+    var checked by remember(title) { mutableStateOf(isSwitch) }
+
     Column(
         modifier = Modifier
             .absolutePadding(left = 8.dp, right = 8.dp, top = 12.dp, bottom = 0.dp)
@@ -517,9 +622,15 @@ private fun Function(
         }
         ActionSwitch(
             text = title,
-            isSwitch = isSwitch,
-        ) {
-            onClick(it)
+            isSwitch = checked,
+        ) { newValue ->
+            if (onClick(newValue)) {
+                checked = newValue
+                Toast.makeText(ctx, if (newValue) "已开启：$title" else "已关闭：$title", Toast.LENGTH_SHORT).show()
+                true
+            } else {
+                false
+            }
         }
     }
 }
@@ -543,11 +654,11 @@ private fun InformationCard(ctx: Context) {
                 content =  "${Build.VERSION.RELEASE} (API ${Build.VERSION.SDK_INT})"
             )
 
-            InfoItem(title = "设备", content = "${Build.BRAND} ${Build.MODEL}") {
+            InfoItem(title = "设备", content = "${Build.BRAND} ${Build.MODEL}", onDoubleClick = {
                 val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                 val mClipData = ClipData.newPlainText("Label", it)
                 cm.setPrimaryClip(mClipData)
-            }
+            })
 
             InfoItem(title = "系统架构", content = Build.SUPPORTED_ABIS.joinToString())
         }
@@ -561,18 +672,18 @@ private fun InfoItem(
     contentColor: Color = GlobalColor.NoticeBoxText,
     title: String,
     content: String,
-    doubleClick: ((String) -> Unit)? = null
+    onClick: (() -> Unit)? = null,
+    onDoubleClick: ((String) -> Unit)? = null
 ) {
     Row(
         modifier = modifier
             .absolutePadding(left = 8.dp, right = 8.dp, top = 12.dp, bottom = 0.dp)
             .fillMaxWidth()
-            .combinedClickable(onDoubleClick = {
-                doubleClick?.invoke(content)
-            }) {
-                true
-            }
-        ,
+            .combinedClickable(
+                enabled = onClick != null || onDoubleClick != null,
+                onClick = { onClick?.invoke() },
+                onDoubleClick = { onDoubleClick?.invoke(content) },
+            ),
         verticalAlignment = Alignment.CenterVertically
     ) {
         Text(
@@ -690,19 +801,16 @@ private inline fun TextItem(
     )
     InfoItem(
         title = title,
-        content = text.value.ifEmpty { "未配置" },
+        content = text.value.ifEmpty { "未配置（点击编辑）" },
         titleColor = GlobalColor.DataBoxTextLight,
-        contentColor = if (text.value.isEmpty()) GlobalColor.DataBoxTextDark else GlobalColor.DataBoxTextLight
-    ) {
-        dialogPortInputState.show(
-            confirm = {
-                confirm(text.value)
-            },
-            cancel = {
-                cancel()
-            }
-        )
-    }
+        contentColor = if (text.value.isEmpty()) GlobalColor.DataBoxTextDark else GlobalColor.DataBoxTextLight,
+        onClick = {
+            dialogPortInputState.show(
+                confirm = { confirm(text.value) },
+                cancel = { cancel() },
+            )
+        },
+    )
 }
 
 @Preview

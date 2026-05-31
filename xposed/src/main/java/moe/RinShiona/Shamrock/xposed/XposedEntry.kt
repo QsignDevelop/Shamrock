@@ -1,6 +1,7 @@
 package moe.RinShiona.Shamrock.xposed
 
 import android.content.Context
+import android.util.Log
 import de.robv.android.xposed.IXposedHookLoadPackage
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedBridge.log
@@ -14,6 +15,9 @@ import moe.RinShiona.Shamrock.xposed.loader.FuckAMS
 import moe.RinShiona.Shamrock.xposed.loader.LuoClassloader
 import moe.RinShiona.Shamrock.xposed.helper.NativeCrashGuard
 import moe.RinShiona.Shamrock.xposed.helper.NtTaskSecurityGuard
+import moe.RinShiona.Shamrock.xposed.helper.KillGuardHooks
+import moe.RinShiona.Shamrock.xposed.helper.DetectionKillShield
+import moe.RinShiona.Shamrock.xposed.helper.MsfBootGuard
 import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.tools.FuzzySearchClass
 import moe.RinShiona.Shamrock.tools.afterHook
@@ -68,7 +72,11 @@ internal class XposedEntry: IXposedHookLoadPackage {
         private fun isMsfProcessName(processName: String): Boolean =
             processName.endsWith(":MSF")
 
-        private fun plog(msg: String) = log("Shamrock[${procTag()}]: $msg")
+        private fun plog(msg: String) {
+            val line = "Shamrock[${procTag()}]: $msg"
+            Log.i("Shamrock", line)
+            log(line)
+        }
 
         // QQ version code thresholds.
         // 9.2.90 build is 7560 series (NT architecture).
@@ -82,6 +90,12 @@ internal class XposedEntry: IXposedHookLoadPackage {
     private var firstStageInit = false
 
     override fun handleLoadPackage(param: XC_LoadPackage.LoadPackageParam) {
+        if (param.packageName == PACKAGE_NAME_QQ || param.packageName == PACKAGE_NAME_TIM) {
+            Log.i(
+                "Shamrock",
+                "loadPackage pkg=${param.packageName} proc=${param.processName}",
+            )
+        }
         if (param.packageName == PACKAGE_NAME_QQ && isMsfProcessName(param.processName)) {
             entryMsf(param.classLoader)
             return
@@ -105,10 +119,25 @@ internal class XposedEntry: IXposedHookLoadPackage {
      * 同时尽早装 NativeCrashGuard，吞掉 cmark.NativeLib 之类的非致命 JNI 崩溃。
      */
     private fun entryMsf(classLoader: ClassLoader) {
-        plog("entryMsf — sign-process anti-detect mode")
+        plog("entryMsf — sign-process init")
+        DetectionKillShield.arm(120_000L)
+        KillGuardHooks.enableLiteColdStartWindow(600_000L)
+        kotlin.runCatching { KillGuardHooks.install(classLoader) }
+        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
+        if (AntiDetectionConfig.hookSign) {
+            kotlin.runCatching { EarlyAntiDetection.hookSignExtraSanitizerOnly(classLoader) }
+        }
+        kotlin.runCatching {
+            moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge.installHooks(classLoader)
+        }
+        kotlin.runCatching { MsfBootGuard.installMsf(classLoader) }
         kotlin.runCatching { NativeCrashGuard.install(classLoader) }
-        kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
-            .onFailure { plog("MSF anti-detect install failed: ${it.message}") }
+        if (!AntiDetectionConfig.connectivitySafeMode) {
+            kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
+                .onFailure { plog("MSF anti-detect install failed: ${it.message}") }
+        } else {
+            plog("connectivity-safe: MSF sign-sanitizer + QSign (full anti-detect after MSF onCreate)")
+        }
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
                 ?: param.args.firstOrNull()?.javaClass?.classLoader
@@ -195,12 +224,19 @@ internal class XposedEntry: IXposedHookLoadPackage {
             plog("MSF execStartupInit aborted — classloader inject failed")
             return false
         }
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            kotlin.runCatching { EarlyAntiDetection.installLite(classLoader) }
+                .onFailure { plog("MSF deferred lite anti-detect failed: ${it.message}") }
+        }
         kotlin.runCatching {
             ActionLoader.runMsf(ctx)
         }.onFailure {
             plog("MSF ActionLoader.runMsf failed")
             log(it)
             return false
+        }
+        kotlin.runCatching {
+            moe.RinShiona.Shamrock.xposed.helper.QuaBootstrap.forceApply(classLoader, null)
         }
         return true
     }
@@ -214,9 +250,13 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — NtTask guard + late service init")
+        DetectionKillShield.arm(120_000L)
+        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
         kotlin.runCatching { NativeCrashGuard.install(classLoader) }
         kotlin.runCatching { NtTaskSecurityGuard.install(classLoader) }
-        kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            plog("connectivity-safe: defer anti-detect until NtTask pre-ArtTi")
+        }
 
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
@@ -244,10 +284,11 @@ internal class XposedEntry: IXposedHookLoadPackage {
         startup: de.robv.android.xposed.XC_MethodHook
     ): HookInstallReport {
         val tier2 = tryHookBaseApplicationOnCreate(classLoader, startup)
+        val tierAttach = tryHookBaseApplicationAttach(classLoader, startup)
         val tier5 = tryHookMobileQQOnCreate(classLoader, startup)
         return HookInstallReport(
             tier1 = false,
-            tier2 = tier2,
+            tier2 = tier2 || tierAttach,
             tier3 = false,
             tier4 = false,
             tier5 = tier5
@@ -348,6 +389,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
                 if (mqqClass.isInstance(obj)) return true
             }
         }
+        if (resolveContextFromLoader(loader) != null) return true
         return resolveMobileQQApp(loader) != null
     }
 
@@ -424,12 +466,32 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }
     }
 
+    private fun tryHookBaseApplicationAttach(classLoader: ClassLoader, hook: de.robv.android.xposed.XC_MethodHook): Boolean {
+        return try {
+            XposedHelpers.findAndHookMethod(
+                "com.tencent.common.app.BaseApplicationImpl",
+                classLoader,
+                "attachBaseContext",
+                Context::class.java,
+                hook,
+            )
+            log("Shamrock: [Tier 2a] hooked BaseApplicationImpl.attachBaseContext()")
+            true
+        } catch (e: Throwable) {
+            log("Shamrock: [Tier 2a] attach hook failed: ${e.message}")
+            false
+        }
+    }
+
     // ============ Tier 2: 9.2.90 NT 主路径 ============
     private fun tryHookBaseApplicationOnCreate(classLoader: ClassLoader, hook: de.robv.android.xposed.XC_MethodHook): Boolean {
         return try {
-            val baseApp = classLoader.loadClass("com.tencent.common.app.BaseApplicationImpl")
-            val onCreate = baseApp.getDeclaredMethod("onCreate")
-            XposedBridge.hookMethod(onCreate, hook)
+            XposedHelpers.findAndHookMethod(
+                "com.tencent.common.app.BaseApplicationImpl",
+                classLoader,
+                "onCreate",
+                hook,
+            )
             log("Shamrock: [Tier 2] hooked BaseApplicationImpl.onCreate() (NT main entry)")
             true
         } catch (e: ClassNotFoundException) {
@@ -571,7 +633,10 @@ internal class XposedEntry: IXposedHookLoadPackage {
         }
         plog("Process Name = $processName")
 
-        if (AntiDetectionConfig.allowEarlyHooks()) {
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            plog("connectivity-safe: lite anti-detect + QSign bootstrap")
+            kotlin.runCatching { EarlyAntiDetection.installLite(classLoader) }
+        } else if (AntiDetectionConfig.allowEarlyHooks()) {
             kotlin.runCatching {
                 EarlyAntiDetection.installCritical(classLoader)
                 plog("critical anti-detection installed (main thread)")
@@ -585,8 +650,39 @@ internal class XposedEntry: IXposedHookLoadPackage {
         kotlin.runCatching { MMKVFetcher.initMMKV(ctx) }
             .onFailure { plog("MMKV init skipped/failed: ${it.message}") }
 
-        scheduleDeferredStartup(ctx, classLoader)
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            scheduleConnectivitySafeStartup(ctx, classLoader)
+        } else {
+            scheduleDeferredStartup(ctx, classLoader)
+        }
         return true
+    }
+
+    /** 联网优先：等 QQ 过 ArtTiHook 后再启 HTTP/QSign，避免 startup 阶段干扰。 */
+    private fun scheduleConnectivitySafeStartup(ctx: Context, classLoader: ClassLoader) {
+        Thread({
+            try {
+                Thread.sleep(DEFERRED_INIT_DELAY_MS)
+                kotlin.runCatching { ActionLoader.runFirst(ctx) }
+                    .onFailure { plog("runFirst failed: ${it.message}"); log(it) }
+                kotlin.runCatching { ActionLoader.runService(ctx) }
+                    .onFailure { plog("runService failed: ${it.message}"); log(it) }
+                kotlin.runCatching {
+                    moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge.installHooks(classLoader)
+                    moe.RinShiona.Shamrock.xposed.helper.QuaBootstrap.forceApply(classLoader, null)
+                }
+                EarlyAntiDetection.installLiteDeferred(classLoader)
+                sec_static_stage_inited = true
+                System.setProperty("qxbot_flag", "1")
+                plog("connectivity-safe: deferred QSign bootstrap done")
+            } catch (t: Throwable) {
+                plog("connectivity-safe deferred bootstrap error: ${t.message}")
+                log(t)
+            }
+        }, "Shamrock-LiteService").apply {
+            isDaemon = true
+            start()
+        }
     }
 
     private fun scheduleDeferredStartup(ctx: Context, classLoader: ClassLoader) {

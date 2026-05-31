@@ -39,6 +39,10 @@ import moe.RinShiona.Shamrock.tools.respond
 import moe.RinShiona.Shamrock.tools.toHexString
 import moe.RinShiona.Shamrock.utils.PlatformUtils
 import moe.RinShiona.Shamrock.xposed.helper.IpcFetcher
+import moe.RinShiona.Shamrock.xposed.helper.QSignConfig
+import moe.RinShiona.Shamrock.xposed.helper.SignRequestHandler
+import moe.RinShiona.Shamrock.xposed.helper.ShamrockSignRelay
+import moe.RinShiona.Shamrock.xposed.helper.XPrefConfigLoader
 import moe.RinShiona.Shamrock.xposed.ipc.ShamrockIpc
 import moe.RinShiona.Shamrock.xposed.ipc.bytedata.IByteData
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
@@ -47,7 +51,9 @@ import mqq.app.MobileQQ
 import java.nio.ByteBuffer
 import java.util.Locale
 
-private var signer: IQSigner? = null
+private var signer: IQSigner?
+    get() = SignRequestHandler.signer
+    set(value) { SignRequestHandler.signer = value }
 private var byteData: IByteData? = null
 
 private fun getMsfServiceInfo(): ActivityManager.RunningServiceInfo? {
@@ -61,7 +67,8 @@ private fun getMsfServiceInfo(): ActivityManager.RunningServiceInfo? {
     return null
 }
 
-private fun isMsfServiceAlive(): Boolean = getMsfServiceInfo() != null
+private fun isMsfServiceAlive(): Boolean =
+    getMsfServiceInfo() != null || ShamrockSignRelay.isMsfHeartbeatFresh()
 
 fun Routing.qsignHome() {
     get("/") {
@@ -143,18 +150,48 @@ fun Routing.qsign() {
 
     route("/sign") {
         get {
+            val qua = fetchOrNull("qua")
             readSignCompatParams()
             val uin = fetchGetOrThrow("uin")
             val cmd = fetchGetOrThrow("cmd")
             val seq = fetchGetOrThrow("seq").toInt()
             val buffer = fetchGetOrThrow("buffer").hex2ByteArray()
-            requestSign(cmd, uin, seq, buffer)
+            with(SignRequestHandler) { requestSign(cmd, uin, seq, buffer, qua) }
         }
         post {
             val req = call.receive<SignRequest>()
             readSignCompatParamsFrom(req)
-            requestSign(req.cmd, req.uin, req.seq.toInt(), req.buffer.hex2ByteArray())
+            with(SignRequestHandler) {
+                requestSign(req.cmd, req.uin, req.seq.toInt(), req.buffer.hex2ByteArray(), req.qua)
+            }
         }
+    }
+
+    get("/sign/mode") {
+        XPrefConfigLoader.reloadQSignOnly()
+        val loader = mqq.app.MobileQQ.getContext().classLoader
+        val quaR = moe.RinShiona.Shamrock.xposed.helper.QuaBootstrap.forceApply(loader, null)
+        val snapQua = runCatching {
+            val f = java.io.File("/data/data/com.tencent.mobileqq/files/shamrock_ipc/qsec_snapshot.json")
+            if (f.exists()) org.json.JSONObject(f.readText()).optString("business_qua") else ""
+        }.getOrDefault("")
+        call.respond(
+            APIResult(
+                0, "success",
+                SignModeData(
+                    mode = QSignConfig.signMode,
+                    msfHeartbeat = ShamrockSignRelay.isMsfHeartbeatFresh(),
+                    quaSrc = quaR.source,
+                    quaLen = quaR.qua.length,
+                    quaPreview = quaR.qua.take(48),
+                    snapshotQuaLen = snapQua.length,
+                    snapshotQuaPreview = snapQua.take(48),
+                    connectivitySafe = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode,
+                    antiDetectionEnabled = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.enabled,
+                    quaUsable = moe.RinShiona.Shamrock.xposed.helper.SignCore.isUsableQua(quaR.qua),
+                ),
+            ),
+        )
     }
 
     get("/submit") {
@@ -411,52 +448,6 @@ private suspend fun initByteData(): Boolean {
     byteData = IByteData.Stub.asInterface(binder)
     binder.linkToDeath({ byteData = null }, 0)
     return true
-}
-
-private suspend fun PipelineContext<Unit, ApplicationCall>.requestSign(
-    cmd: String,
-    uin: String,
-    seq: Int,
-    buffer: ByteArray,
-) {
-    if (!isMsfServiceAlive()) {
-        QSignStats.recordSign(false)
-        call.respond(APIResult<SignResponse>(-2, "MSF not started", null))
-        return
-    }
-    if (signer == null || signer?.asBinder()?.isBinderAlive == false) {
-        if (!initSigner()) {
-            QSignStats.recordSign(false)
-            respond(false, Status.InternalHandlerError)
-            return
-        }
-    }
-
-    val sign = withTimeoutOrNull(5000) {
-        signer!!.sign(cmd, seq, uin, buffer)
-    }
-    if (sign == null) {
-        QSignStats.recordSign(false)
-        respond(false, Status.IAmTired)
-        return
-    }
-
-    QSignStats.recordSign(true)
-    val callbacks = sign.callbacks.map {
-        SsoPacket(it.cmd, it.body.uppercase(Locale.ROOT), it.callbackId)
-    }
-    call.respond(
-        APIResult(
-            0, "success",
-            SignResponse(
-                token = sign.token.toHexString().uppercase(Locale.ROOT),
-                extra = sign.extra.toHexString().uppercase(Locale.ROOT),
-                sign = sign.sign.toHexString().uppercase(Locale.ROOT),
-                o3did = sign.o3did.uppercase(Locale.ROOT),
-                requestCallback = callbacks
-            )
-        )
-    )
 }
 
 /** unidbg 兼容参数：接受但不在 Shamrock 真机路径中使用 */

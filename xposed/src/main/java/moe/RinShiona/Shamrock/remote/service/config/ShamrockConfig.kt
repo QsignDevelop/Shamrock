@@ -137,7 +137,7 @@ internal object ShamrockConfig {
     /** Neko 模式：开启 QSign HTTP 接口（兼容旧 pro_api 键） */
     fun isNeko(): Boolean {
         val mmkv = MMKVFetcher.mmkvWithId("shamrock_config")
-        return mmkv.getBoolean("neko_api", mmkv.getBoolean("pro_api", false))
+        return mmkv.getBoolean("neko_api", mmkv.getBoolean("pro_api", true))
     }
 
     @Deprecated("Use isNeko()", ReplaceWith("isNeko()"))

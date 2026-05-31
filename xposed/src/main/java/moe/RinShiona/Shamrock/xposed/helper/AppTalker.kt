@@ -2,10 +2,11 @@ package moe.RinShiona.Shamrock.xposed.helper
 
 import android.content.ContentValues
 import android.net.Uri
+import moe.RinShiona.Shamrock.xposed.helper.ModuleHide.PACKAGE
 import mqq.app.MobileQQ
 
 internal object AppTalker {
-    private val URI = Uri.parse("content://moe.RinShiona.Shamrock.xqbot.provider")
+    private val URI = Uri.parse("content://$PACKAGE.xqbot.provider")
 
     fun talk(values: ContentValues, onFailure: ((Throwable) -> Unit)? = null) {
         val ctx = MobileQQ.getContext()

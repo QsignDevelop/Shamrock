@@ -3,8 +3,8 @@ cmake_minimum_required(VERSION 3.22.1)
 # NOTE: project name MUST differ from app/src/main/cpp/CMakeLists.txt which
 # also declares project("shamrock") and builds libshamrock.so. Keeping the
 # same name would yield two libraries with identical SONAME and the wrong
-# one would be packaged into the APK. Use "shamrocknt" — for "9.2.90 NT".
-project("shamrocknt")
+# one would be packaged into the APK. Use "cherrypopnt" (CherryPop rebrand).
+project("cherrypopnt")
 
 # ---------------------------------------------------------------------------
 # Compiler / link flags

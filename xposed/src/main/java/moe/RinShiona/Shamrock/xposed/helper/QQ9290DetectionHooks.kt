@@ -71,6 +71,15 @@ internal object QQ9290DetectionHooks {
                 }
             )
         }
+        listOf("isRoot", "isRooted", "checkRoot", "hasRoot", "isSuExist", "checkSu").forEach { name ->
+            runCatching {
+                XposedBridge.hookAllMethods(dtc, name, object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        param.result = false
+                    }
+                })
+            }
+        }
     }
 
     /** Dtc — string sanitizers (afterHook only; avoid hooking dtcProcessCall hot path). */
@@ -104,8 +113,10 @@ internal object QQ9290DetectionHooks {
         runCatching {
             XposedBridge.hookAllMethods(dtc, "getPropSafe", object : XC_MethodHook() {
                 override fun afterHookedMethod(param: MethodHookParam) {
+                    val key = param.args.firstOrNull() as? String
                     val raw = param.result as? String ?: return
-                    param.result = ModuleHide.sanitizeValue(raw) ?: raw
+                    param.result = ModuleHide.sanitizeBootloaderProp(key, raw)
+                        ?: ModuleHide.sanitizeValue(raw) ?: raw
                 }
             })
         }
@@ -177,6 +188,14 @@ internal object QQ9290DetectionHooks {
                 }
             })
         }
+        runCatching {
+            val qsec = classLoader.loadClass(QSEC)
+            XposedBridge.hookAllMethods(qsec, "getXwDebugID", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = ByteArray(0)
+                }
+            })
+        }
     }
 
     private fun hookQSecExtended(classLoader: ClassLoader) {
@@ -228,9 +247,17 @@ internal object QQ9290DetectionHooks {
 
     private fun isDangerousShellCommand(cmd: String): Boolean {
         val c = cmd.lowercase()
-        return c.contains("which su") || c == "su" || c.startsWith("su ") ||
-            c.contains("magisk") || c.contains("xposed") || c.contains("lsposed") ||
-            c.contains("busybox") || (c.contains("getprop") && c.contains("debug"))
+        return c.contains("which su") || c == "su" || c.startsWith("su ") || c.endsWith(" su") ||
+            c.contains(" magisk") || c.startsWith("magisk") ||
+            c.contains("xposed") || c.contains("lsposed") || c.contains("zygisk") ||
+            c.contains("busybox") ||
+            c.contains("getprop") && (
+                c.contains("debug") || c.contains("secure") || c.contains("adb") ||
+                    c.contains("boot.") || c.contains("usb") || c.contains("root")
+                ) ||
+            c.contains("cat /proc/") && (c.contains("maps") || c.contains("mount")) ||
+            c.contains("dumpsys package") ||
+            (c.startsWith("ps") && (c.contains("magisk") || c.contains("lsposed") || c.contains("zygisk")))
     }
 
     private fun sanitizeDtcBlResult(result: Any?): Any? {

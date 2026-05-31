@@ -92,13 +92,17 @@ object AntiDetectionConfig {
     var hideEmulator = true
     
     // ====== 网络检测防护 =====
-    /** 隐藏代理/抓包工具检测 */
-    var hideNetwork = true
+    /** 隐藏代理/抓包工具检测 — 默认关，避免误伤 QQ 联网 */
+    var hideNetwork = false
     
     /** 电池状态检测防护 */
     var hideBattery = true
     
     // ====== Sign相关 =====
+    /** 联网优先：跳过重型反检测，只保留 QSign */
+    var connectivitySafeMode = true
+    /** QSec 重度绕过，默认关 */
+    var qsecHeavyBypass = false
     /** Hook签名获取（核心功能） */
     var hookSign = true
     
@@ -139,7 +143,9 @@ object AntiDetectionConfig {
         fakeDevice = true
         fakeFramework = true
         hideEmulator = true
-        hideNetwork = true
+        hideNetwork = false
+        connectivitySafeMode = true
+        qsecHeavyBypass = false
         hideBattery = true
         hookSign = true
         useRemoteQSign = true
@@ -173,8 +179,12 @@ object AntiDetectionConfig {
     }
 
     /**
-     * 是否允许安装 EarlyAntiDetection。
-     * 关闭总开关时始终禁用；早期开关单独可控，便于排查库加载误伤。
+     * 完整 EarlyAntiDetection（含 QSecBypass），联网优先模式下禁用。
      */
-    fun allowEarlyHooks(): Boolean = enabled && earlyEnabled
+    fun allowEarlyHooks(): Boolean = enabled && earlyEnabled && !connectivitySafeMode
+
+    /** 联网优先下的轻量反检测：不依赖「启用反检测」总开关，避免旧配置 enabled=false 导致零防护。 */
+    fun allowLiteAntiDetect(): Boolean = connectivitySafeMode
+
+    fun allowHeavyAntiDetect(): Boolean = allowEarlyHooks() && qsecHeavyBypass
 }

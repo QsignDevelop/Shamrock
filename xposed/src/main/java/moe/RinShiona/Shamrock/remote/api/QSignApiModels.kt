@@ -48,6 +48,29 @@ data class SignRequest(
 )
 
 @Serializable
+data class SignModeData(
+    val mode: String,
+    @SerialName("msf_heartbeat")
+    val msfHeartbeat: Boolean,
+    @SerialName("qua_src")
+    val quaSrc: String,
+    @SerialName("qua_len")
+    val quaLen: Int,
+    @SerialName("qua_preview")
+    val quaPreview: String,
+    @SerialName("snapshot_qua_len")
+    val snapshotQuaLen: Int,
+    @SerialName("snapshot_qua_preview")
+    val snapshotQuaPreview: String,
+    @SerialName("connectivity_safe")
+    val connectivitySafe: Boolean,
+    @SerialName("anti_detection_enabled")
+    val antiDetectionEnabled: Boolean,
+    @SerialName("qua_usable")
+    val quaUsable: Boolean = false,
+)
+
+@Serializable
 data class PrewarmResult(
     val prewarmed: Boolean,
     val poolSize: Int
