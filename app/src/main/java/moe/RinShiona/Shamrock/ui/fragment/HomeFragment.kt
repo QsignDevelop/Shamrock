@@ -44,10 +44,12 @@ fun HomeFragment(
 
     var rootOk by remember { mutableStateOf<Boolean?>(null) }
     var suOk by remember { mutableStateOf<Boolean?>(null) }
+    val oneBotEnabled = remember { ShamrockConfig.isOneBotV11Enabled(ctx) }
     val qqInfo = remember { DeviceStatus.getQqVersionLabel(ctx) }
     val cherryVer = remember { getShamrockVersion(ctx) }
     val antiLabel = remember { DeviceStatus.getAntiDetectLabel(ctx) }
     val antiOk = ShamrockConfig.isAntiDetectionEnabled(ctx)
+    val ready = remember { ctx.getSharedPreferences("config", 0).all.isNotEmpty() }
 
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
@@ -66,10 +68,15 @@ fun HomeFragment(
         DreamGlassCard {
             Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
                 Text(
-                    text = if (active) LocalString.frameworkYesLite else LocalString.frameworkNoLite,
+                    text = if (ready) "已就绪" else "未就绪（先打开一次设置页）",
                     fontSize = 16.sp,
                     fontWeight = FontWeight.SemiBold,
-                    color = if (active) DreamPalette.Pink500 else DreamPalette.TextSecondary,
+                    color = if (ready) DreamPalette.Pink500 else DreamPalette.TextSecondary,
+                )
+                Text(
+                    text = "服务连通：${if (oneBotEnabled) (if (active) "是" else "否") else "OneBot 已关闭"}",
+                    fontSize = 13.sp,
+                    color = if (!oneBotEnabled) DreamPalette.TextSecondary else if (active) DreamPalette.TextPrimary else DreamPalette.TextSecondary,
                 )
                 Text(
                     text = "$coreVer · $coreLabel",

@@ -91,9 +91,46 @@ object DashboardInitializer {
                     }
                 }
             } catch (e: ConnectException) {
-                state.isFined.value = false
-                context.broadcastToModule {
-                    putExtra("__cmd", "checkAndStartService")
+                // Port may be out-of-sync with cached QQ-side config (MIUI blocks broadcasts),
+                // so probe a few common ports before declaring the service dead.
+                val candidates = listOf(
+                    servicePort,
+                    ShamrockConfig.getHttpPort(context),
+                    5700,
+                    5701,
+                    5800,
+                ).distinct().filter { it > 0 }
+                var recovered = false
+                for (p in candidates) {
+                    runCatching {
+                        GlobalClient.get {
+                            url("http://127.0.0.1:$p/get_login_info")
+                            val token = ShamrockConfig.getToken(context)
+                            if (token.isNotBlank()) {
+                                header("Authorization", "Bearer $token")
+                            }
+                        }.let {
+                            if (it.status == HttpStatusCode.OK) {
+                                val result: CommonResult<StdAccount> = Json.decodeFromString(it.bodyAsText())
+                                if (result.retcode == 0) {
+                                    servicePort = p
+                                    state.isFined.value = true
+                                    AccountInfo.let { account ->
+                                        account.uin.value = result.data.userId.toString()
+                                        account.nick.value = result.data.nick
+                                    }
+                                    recovered = true
+                                }
+                            }
+                        }
+                    }
+                    if (recovered) break
+                }
+                if (!recovered) {
+                    state.isFined.value = false
+                    context.broadcastToModule {
+                        putExtra("__cmd", "checkAndStartService")
+                    }
                 }
 
                 if (ShamrockConfig.enableAutoStart(context)) {

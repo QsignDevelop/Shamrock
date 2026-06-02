@@ -23,6 +23,7 @@ import moe.RinShiona.Shamrock.xposed.loader.ActionLoader
 import moe.RinShiona.Shamrock.xposed.loader.NativeLoader
 import de.robv.android.xposed.XposedBridge
 import mqq.app.MobileQQ
+import android.net.Uri
 import java.util.concurrent.atomic.AtomicBoolean
 
 class PullConfig: IAction {
@@ -126,20 +127,36 @@ class PullConfig: IAction {
                 initAppService(ctx)
                 return
             }
+            // If prefs are not readable, refresh config from the App via provider call.
+            runCatching {
+                val uri = Uri.parse("content://${moe.RinShiona.Shamrock.xposed.helper.ModuleHide.PACKAGE}.xqbot.provider")
+                val bundle = MobileQQ.getContext().contentResolver.call(uri, "get_config", null, null)
+                if (bundle != null && bundle.getBoolean("__ok", false)) {
+                    isConfigOk = true
+                    XposedBridge.log("Shamrock: config loaded via provider call (${bundle.keySet().size} keys)")
+                    val intent = android.content.Intent().apply {
+                        bundle.keySet().forEach { k ->
+                            if (k == "__ok") return@forEach
+                            when (val v = bundle.get(k)) {
+                                is Int -> putExtra(k, v)
+                                is Long -> putExtra(k, v)
+                                is Boolean -> putExtra(k, v)
+                                is Float -> putExtra(k, v)
+                                is String -> putExtra(k, v)
+                                is ByteArray -> putExtra(k, v)
+                            }
+                        }
+                    }
+                    ShamrockConfig.updateConfig(intent)
+                    initAppService(ctx)
+                    return
+                }
+            }
             if (ShamrockConfig.isInit()) {
                 ctx.toast("使用缓存配置启动")
                 isConfigOk = true
                 initAppService(ctx)
                 return
-            }
-            if (attempt == 0) {
-                DataRequester.request("init", onFailure = { e ->
-                    XposedBridge.log("Shamrock: init handshake failed: ${e.message}")
-                }, bodyBuilder = null) {
-                    isConfigOk = true
-                    ShamrockConfig.updateConfig(it)
-                    initAppService(ctx)
-                }
             }
             XposedBridge.log("Shamrock: waiting for Shamrock App config (attempt ${attempt + 1}/30)")
             delay(2000)
@@ -154,16 +171,17 @@ class PullConfig: IAction {
 
     private fun initAppService(ctx: Context) {
         if (!serviceBootstrapped.compareAndSet(false, true)) return
+        // libshamrock.so = CQ 编解码等 JNI；与 anti-detect 的 cherrypopnt 无关，联网安全模式也要加载。
+        kotlin.runCatching { NativeLoader.load("shamrock") }
+            .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
         if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode) {
-            kotlin.runCatching { NativeLoader.load("shamrock") }
-                .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
             val nativeStatus = safeTestNativeLibrary()
             XposedBridge.log("Shamrock: native probe => $nativeStatus")
             if (!nativeStatus.startsWith("Shamrock library not loaded")) {
                 ctx.toast(nativeStatus)
             }
         } else {
-            XposedBridge.log("Shamrock: connectivity-safe — skip legacy shamrock native load")
+            XposedBridge.log("Shamrock: connectivity-safe — shamrock JNI loaded, anti-detect probe skipped")
         }
         ActionLoader.runService(ctx)
         kotlin.runCatching {

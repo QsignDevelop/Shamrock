@@ -1,22 +1,30 @@
 package moe.RinShiona.Shamrock.ui.app
 
 import android.content.Context
+import android.content.Context.MODE_PRIVATE
 import moe.RinShiona.Shamrock.ui.service.internal.broadcastToModule
+import java.io.File
 
 object ShamrockConfig {
+    private fun prefs(ctx: Context) = ctx.createDeviceProtectedStorageContext().let { dps ->
+        // Keep config in device-protected storage so XSharedPreferences can read it reliably on MIUI/HyperOS.
+        runCatching { dps.moveSharedPreferencesFrom(ctx, "config") }
+        dps.getSharedPreferences("config", MODE_PRIVATE)
+    }
+
     fun getSSLKeyPath(ctx: Context): String {
-        val preferences = ctx.getSharedPreferences("config", 0)
+        val preferences = prefs(ctx)
         return preferences.getString("key_store", "")!!
     }
 
     fun setSSLKeyPath(ctx: Context, path: String) {
-        val preferences = ctx.getSharedPreferences("config", 0)
+        val preferences = prefs(ctx)
         preferences.edit().putString("key_store", path).apply()
         pushUpdate(ctx)
     }
 
     fun getSSLPort(ctx: Context): Int {
-        val preferences = ctx.getSharedPreferences("config", 0)
+        val preferences = prefs(ctx)
         return preferences.getInt("ssl_port", 5701)
     }
 
@@ -333,9 +341,55 @@ object ShamrockConfig {
 
     fun pushUpdate(ctx: Context) {
         val preferences = ctx.getSharedPreferences("config", 0)
-        preferences.edit()
-            .putLong("config_revision", System.currentTimeMillis())
-            .commit()
+        // Ensure the shared prefs file is fully materialized and readable by XSharedPreferences.
+        // Some ROMs / storage modes behave poorly when keys are only written via apply().
+        runCatching {
+            val editor = preferences.edit()
+            getConfigMap(ctx).forEach { (key, value) ->
+                when (value) {
+                    null -> editor.remove(key)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is String -> editor.putString(key, value)
+                    is Set<*> -> @Suppress("UNCHECKED_CAST") editor.putStringSet(key, value as Set<String>)
+                    else -> {
+                        // ByteArray/Double/Short/Byte are only used for broadcast payload; keep file stable.
+                    }
+                }
+            }
+            editor.putLong("config_revision", System.currentTimeMillis())
+            editor.commit()
+        }
+        // Mirror config into device-protected storage (DE) for XSharedPreferences on MIUI/HyperOS.
+        runCatching {
+            val dps = ctx.createDeviceProtectedStorageContext()
+            runCatching { dps.moveSharedPreferencesFrom(ctx, "config") }
+            val dpPrefs = dps.getSharedPreferences("config", MODE_PRIVATE)
+            val editor = dpPrefs.edit()
+            getConfigMap(ctx).forEach { (key, value) ->
+                when (value) {
+                    null -> editor.remove(key)
+                    is Int -> editor.putInt(key, value)
+                    is Long -> editor.putLong(key, value)
+                    is Boolean -> editor.putBoolean(key, value)
+                    is Float -> editor.putFloat(key, value)
+                    is String -> editor.putString(key, value)
+                    is Set<*> -> @Suppress("UNCHECKED_CAST") editor.putStringSet(key, value as Set<String>)
+                }
+            }
+            editor.putLong("config_revision", System.currentTimeMillis())
+            editor.commit()
+        }
+        // HyperOS/MIUI may ignore xposedsharedprefs hints; make the backing xml readable.
+        runCatching {
+            val sharedPrefsDir = File(ctx.applicationInfo.dataDir, "shared_prefs")
+            val prefFile = File(sharedPrefsDir, "config.xml")
+            sharedPrefsDir.setReadable(true, false)
+            sharedPrefsDir.setExecutable(true, false)
+            prefFile.setReadable(true, false)
+        }
         ctx.broadcastToModule {
             getConfigMap(ctx).forEach { (key, value) ->
                 if (value == null) {

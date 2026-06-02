@@ -11,6 +11,7 @@ import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
@@ -28,6 +29,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -70,7 +72,7 @@ class MainActivity : ComponentActivity() {
         WindowCompat.setDecorFitsSystemWindows(window, true)
         WindowCompat.getInsetsController(window, window.decorView).isAppearanceLightStatusBars = true
         window.statusBarColor = DreamPalette.StatusBar.toArgb()
-        window.navigationBarColor = DreamPalette.Pink100.toArgb()
+        window.navigationBarColor = Color.White.toArgb()
 
         setContent {
             CompositionLocalProvider(LocalIndication provides NoIndication) {
@@ -78,8 +80,25 @@ class MainActivity : ComponentActivity() {
             }
         }
 
+        ensureDefaultConfig()
         DashboardInitializer(this, ShamrockConfig.getHttpPort(this))
+        pushConfigToModule()
         broadcastToModule { putExtra("__cmd", "fetchPort") }
+    }
+
+    private fun pushConfigToModule() {
+        ShamrockConfig.pushUpdate(this)
+    }
+
+    private fun ensureDefaultConfig() {
+        val prefs = getSharedPreferences("config", MODE_PRIVATE)
+        if (prefs.all.isNotEmpty()) return
+        prefs.edit()
+            .putBoolean("anti_connectivity_safe", true)
+            .putBoolean("anti_detection_enabled", true)
+            .putBoolean("onebot_v11", true)
+            .putInt("port", 5700)
+            .apply()
     }
 
     override fun onResume() {
@@ -88,7 +107,7 @@ class MainActivity : ComponentActivity() {
             .edit()
             .putLong("xqbot_sync", System.currentTimeMillis())
             .apply()
-        ShamrockConfig.pushUpdate(this)
+        pushConfigToModule()
         AppRuntime.uiLogEnabled = ShamrockConfig.isOneBotV11Enabled(this)
         broadcastToModule { putExtra("__cmd", "checkAndStartService") }
         DashboardInitializer.refresh(this)
@@ -173,6 +192,11 @@ private fun AppMainView() {
             DreamyBackground()
             val pagerState = rememberPagerState(pageCount = { visibleTabs.size })
             val scope = rememberCoroutineScope()
+            var selectedTab by remember { mutableIntStateOf(0) }
+
+            LaunchedEffect(pagerState) {
+                snapshotFlow { pagerState.settledPage }.collect { selectedTab = it }
+            }
 
             LaunchedEffect(visibleTabs.size) {
                 if (pagerState.currentPage >= visibleTabs.size) {
@@ -207,10 +231,12 @@ private fun AppMainView() {
                 },
                 bottomBar = {
                     LiquidGlassBottomBar(
+                        modifier = Modifier.navigationBarsPadding(),
                         tabs = visibleTabs.map { it.second },
-                        selectedIndex = pagerState.currentPage,
+                        selectedIndex = selectedTab,
                         onTabSelected = { index ->
-                            scope.launch { pagerState.animateScrollToPage(index) }
+                            selectedTab = index
+                            scope.launch { pagerState.scrollToPage(index) }
                         },
                     )
                 },

@@ -170,9 +170,9 @@ internal object MessageHelper {
     }
 
     fun encodeCQCode(msg: ArrayList<HashMap<String, JsonElement>>): String {
-        return nativeEncodeCQCode(msg.map {
+        val segments = msg.map { segment ->
             val params = hashMapOf<String, String>()
-            it.forEach { (key, value) ->
+            segment.forEach { (key, value) ->
                 if (key != "type") {
                     value.asJsonObject.forEach { param, element ->
                         params[param] = element.asString
@@ -182,7 +182,25 @@ internal object MessageHelper {
                 }
             }
             params
-        })
+        }
+        return runCatching { nativeEncodeCQCode(segments) }
+            .getOrElse { encodeCQCodeKotlin(segments) }
+    }
+
+    private fun encodeCQCodeKotlin(segments: List<Map<String, String>>): String {
+        return buildString {
+            segments.forEach { seg ->
+                val type = seg["_type"] ?: return@forEach
+                if (type == "text") {
+                    append(seg["text"] ?: "")
+                } else {
+                    append("[CQ:$type")
+                    seg.filterKeys { it != "_type" }
+                        .forEach { (k, v) -> append(",$k=").append(v) }
+                    append(']')
+                }
+            }
+        }
     }
 
     private external fun nativeDecodeCQCode(code: String): List<Map<String, String>>
