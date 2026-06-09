@@ -101,6 +101,8 @@ object AntiDetectionConfig {
     // ====== Sign相关 =====
     /** 联网优先：跳过重型反检测，只保留 QSign */
     var connectivitySafeMode = true
+    /** MSF 进程 native maps/probe bootstrap；默认关，避免 JNI FatalError 与通道竞合 */
+    var msfNativeAntiDetect = false
     /** QSec 重度绕过，默认关 */
     var qsecHeavyBypass = false
     /** Hook签名获取（核心功能） */

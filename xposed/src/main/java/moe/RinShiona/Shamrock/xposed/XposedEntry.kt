@@ -120,19 +120,15 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMsf(classLoader: ClassLoader) {
         plog("entryMsf — sign-process init")
-        DetectionKillShield.arm(120_000L)
-        KillGuardHooks.enableLiteColdStartWindow(600_000L)
+        DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
         kotlin.runCatching { KillGuardHooks.install(classLoader) }
+        // ArtTiHook 之前：MSF 也需尽早 Java + libfekit load 监听
+        kotlin.runCatching { EarlyAntiDetection.installLiteBeforeArtTi(classLoader) }
+            .onFailure { plog("MSF pre-ArtTi failed: ${it.message}") }
         kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
-        if (AntiDetectionConfig.hookSign) {
-            kotlin.runCatching { EarlyAntiDetection.hookSignExtraSanitizerOnly(classLoader) }
-        }
-        kotlin.runCatching {
-            moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge.installHooks(classLoader)
-        }
         kotlin.runCatching { MsfBootGuard.installMsf(classLoader) }
         kotlin.runCatching { NativeCrashGuard.install(classLoader) }
-        kotlin.runCatching { EarlyAntiDetection.bootstrapNativeAntiDetectForMsf() }
         if (!AntiDetectionConfig.connectivitySafeMode) {
             kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
                 .onFailure { plog("MSF anti-detect install failed: ${it.message}") }
@@ -226,9 +222,17 @@ internal class XposedEntry: IXposedHookLoadPackage {
             return false
         }
         if (AntiDetectionConfig.connectivitySafeMode) {
-            kotlin.runCatching { EarlyAntiDetection.installLite(classLoader) }
+            kotlin.runCatching { EarlyAntiDetection.installLiteMsfDeferred(classLoader) }
                 .onFailure { plog("MSF deferred lite anti-detect failed: ${it.message}") }
+        } else {
+            kotlin.runCatching { EarlyAntiDetection.installLite(classLoader) }
         }
+        kotlin.runCatching {
+            moe.RinShiona.Shamrock.xposed.helper.QSecContextBridge.installHooks(classLoader)
+        }
+        kotlin.runCatching {
+            moe.RinShiona.Shamrock.xposed.helper.ChannelResponseCapture.ensureHook(classLoader)
+        }.onFailure { plog("MSF ChannelResponseCapture hook failed: ${it.message}") }
         kotlin.runCatching {
             ActionLoader.runMsf(ctx)
         }.onFailure {
@@ -250,13 +254,18 @@ internal class XposedEntry: IXposedHookLoadPackage {
      * 这样无论用户用的是 9.1.x、9.2.85 还是 9.2.90 NT 都能正常启动。
      */
     private fun entryMQQ(classLoader: ClassLoader) {
-        plog("entryMQQ — NtTask guard + late service init")
-        DetectionKillShield.arm(120_000L)
+        plog("entryMQQ — NtTask guard + pre-ArtTi anti-detect")
+        DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        kotlin.runCatching { KillGuardHooks.install(classLoader) }
+        // 必须在 attach / ArtTiHook 之前装好 QSec.detectMethod=false 等，否则 QQ 直接自杀
+        kotlin.runCatching { EarlyAntiDetection.installLiteBeforeArtTi(classLoader) }
+            .onFailure { plog("pre-ArtTi failed: ${it.message}") }
         kotlin.runCatching { XPrefConfigLoader.loadIfAvailable() }
         kotlin.runCatching { NativeCrashGuard.install(classLoader) }
         kotlin.runCatching { NtTaskSecurityGuard.install(classLoader) }
         if (AntiDetectionConfig.connectivitySafeMode) {
-            plog("connectivity-safe: defer anti-detect until NtTask pre-ArtTi")
+            plog("connectivity-safe: pre-ArtTi armed; full lite after Application ready")
         }
 
         val startup = afterHook(51) { param ->

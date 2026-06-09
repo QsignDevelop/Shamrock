@@ -131,6 +131,7 @@ internal object EarlyAntiDetection {
 
     fun bootstrapNativeAntiDetectForMsf(ctx: android.content.Context? = null) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
+        if (!AntiDetectionConfig.msfNativeAntiDetect) return
         if (!isMsfProcess()) return
         if (ShamrockNative.initialized) return
         val host = ctx ?: currentHostContext() ?: return
@@ -170,15 +171,22 @@ internal object EarlyAntiDetection {
         if (!liteInstalled.compareAndSet(false, true)) return
         val mainProc = isMainQqProcess()
         log("installing lite anti-detect (proc=${currentProcessName()} main=$mainProc)")
-        DetectionKillShield.arm(600_000L)
-        KillGuardHooks.enableLiteColdStartWindow(600_000L)
+        DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
         patchBuildTags()
         if (mainProc) {
             scheduleNativeBootstrapEarly()
             installAttachNativeHook(classLoader)
         } else {
-            log("lite subproc: Java anti-detect + MSF native bootstrap")
-            bootstrapNativeAntiDetectForMsf(currentHostContext())
+            log("lite subproc: MSF sign-process (Java hooks only unless msfNativeAntiDetect)")
+            runCatching { ModuleHideHooks.installEarly(classLoader) }
+                .onFailure { log("MSF ModuleHide failed: ${it.message}") }
+            runCatching { AdbHideHooks.install(classLoader) }
+                .onFailure { log("MSF AdbHide failed: ${it.message}") }
+            if (AntiDetectionConfig.msfNativeAntiDetect) {
+                scheduleMsfNativeBootstrapDelayed()
+                hookLibFeKitLoadWithBootstrap()
+            }
         }
         QQ9290DetectionHooks.installCritical(classLoader)
         runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
@@ -201,25 +209,66 @@ internal object EarlyAntiDetection {
         log("lite anti-detect installed")
     }
 
-    /** NtTask 安全任务前：主进程 bootstrap native；子进程仅 Java。 */
+    /** loadPackage / attach 前：QSec + KillGuard + MSF native 监听，赶在 ArtTiHook 之前。 */
     fun installLiteBeforeArtTi(classLoader: ClassLoader) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
-        val mainProc = isMainQqProcess()
-        if (mainProc && allowMainProcessNativeBootstrap()) {
-            bootstrapNativeAntiDetect(currentHostContext())
-        } else if (isMsfProcess()) {
-            bootstrapNativeAntiDetectForMsf(currentHostContext())
+        if (isMsfProcess()) {
+            installLiteMsfEarly(classLoader)
+            return
         }
+        val mainProc = isMainQqProcess()
         DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        runCatching { KillGuardHooks.install(classLoader) }
+        patchBuildTags()
         QQ9290DetectionHooks.installCritical(classLoader)
+        runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
         runCatching { HookEvasion.install(classLoader) }
+        runCatching { PandoraHideHooks.install(classLoader) }
+        runCatching { PackageInstallMonitorHooks.install(classLoader) }
         if (mainProc) {
             runCatching { ModuleHideHooks.installEarly(classLoader) }
+            if (allowMainProcessNativeBootstrap()) {
+                bootstrapNativeAntiDetect(currentHostContext())
+            }
         } else {
             runCatching { ModuleHideHooks.installFileHideOnly() }
         }
+        runCatching { QSecBypassHooks.installLite(classLoader, mainProc) }
+        log("lite pre-ArtTi ready (proc=${currentProcessName()} main=$mainProc native=${ShamrockNative.initialized})")
+    }
+
+    /**
+     * MSF loadPackage 极早阶段：只装 QSec.detectMethod + KillGuard + HookEvasion。
+     * Pandora / SignExtraSanitizer / QSecBypass 等延后到 [installLiteMsfDeferred]，避免 NtStartup JNI FatalError。
+     */
+    fun installLiteMsfEarly(classLoader: ClassLoader) {
+        DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        runCatching { KillGuardHooks.install(classLoader) }
+        patchBuildTags()
+        QQ9290DetectionHooks.installCritical(classLoader)
+        runCatching { HookEvasion.install(classLoader) }
+        log("lite MSF early ready (proc=${currentProcessName()})")
+    }
+
+    /** MSF MobileQQ.onCreate 之后：补全 Dtc/Pandora/sign sanitizer/native。 */
+    fun installLiteMsfDeferred(classLoader: ClassLoader) {
+        if (!isMsfProcess()) return
         runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
-        log("lite pre-ArtTi layer ready (main=$mainProc native=${ShamrockNative.initialized})")
+        runCatching { ModuleHideHooks.installEarly(classLoader) }
+        runCatching { AdbHideHooks.install(classLoader) }
+        runCatching { PandoraHideHooks.install(classLoader) }
+        runCatching { PackageInstallMonitorHooks.install(classLoader) }
+        // MSF 不装 QSecBypass.installLite — neuterDtc 曾短路 dtcSendMessage，破坏联网/握手
+        if (AntiDetectionConfig.hookSign) {
+            runCatching { hookSignExtraSanitizer(classLoader) }
+        }
+        if (AntiDetectionConfig.msfNativeAntiDetect) {
+            hookLibFeKitLoadWithBootstrap()
+            scheduleMsfNativeBootstrapDelayed(1500L)
+        }
+        log("lite MSF deferred ready (native=${ShamrockNative.initialized} msfNative=${AntiDetectionConfig.msfNativeAntiDetect})")
     }
 
     /** 延迟补全 Pandora / 栈隐藏（不再延迟 native）。 */
@@ -382,16 +431,24 @@ internal object EarlyAntiDetection {
      * extra header even if the rest of [AntiDetection] hasn't run yet.
      */
     private fun hookSignExtraSanitizer(classLoader: ClassLoader) {
+        val afterSanitize = object : XC_MethodHook() {
+            override fun afterHookedMethod(param: MethodHookParam) {
+                param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
+            }
+        }
         runCatching {
             val cls = classLoader.loadClass("com.tencent.mobileqq.sign.QQSecuritySign")
-            XposedBridge.hookAllMethods(cls, "getSign", object : XC_MethodHook() {
-                override fun afterHookedMethod(param: MethodHookParam) {
-                    param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
-                }
-            })
+            XposedBridge.hookAllMethods(cls, "getSign", afterSanitize)
             log("SignExtraSanitizer bound on QQSecuritySign.getSign (early)")
         }.onFailure {
-            log("early sign sanitizer install failed: ${it.message}")
+            log("early QQSecuritySign sanitizer failed: ${it.message}")
+        }
+        runCatching {
+            val feKit = classLoader.loadClass("com.tencent.mobileqq.fe.FEKit")
+            XposedBridge.hookAllMethods(feKit, "getSign", afterSanitize)
+            log("SignExtraSanitizer bound on FEKit.getSign (early)")
+        }.onFailure {
+            log("early FEKit sanitizer failed: ${it.message}")
         }
     }
 
@@ -402,8 +459,35 @@ internal object EarlyAntiDetection {
         }
     }
 
-    /** MSF: bootstrap native only after libfekit loads — avoids early dlopen crash. */
+    private val msfNativeScheduled = AtomicBoolean(false)
+
+    /** MSF：等 MobileQQ/libfekit 稳定后再后台 bootstrap，避免 loadLibrary 回调里同步 dlopen。 */
+    fun scheduleMsfNativeBootstrapDelayed(delayMs: Long = 2500L) {
+        if (!AntiDetectionConfig.msfNativeAntiDetect) return
+        if (!isMsfProcess()) return
+        if (!msfNativeScheduled.compareAndSet(false, true)) return
+        Thread({
+            try {
+                Thread.sleep(delayMs)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            if (!isMsfProcess()) return@Thread
+            kotlin.runCatching {
+                bootstrapNativeAntiDetectForMsf(currentHostContext())
+                ShamrockNative.onLibFeKitLoaded()
+                log("MSF delayed native bootstrap => initialized=${ShamrockNative.initialized}")
+            }.onFailure {
+                log("MSF delayed native bootstrap failed: ${it.message}")
+            }
+        }, "Shamrock-MsfNativeDelay").apply { isDaemon = true; start() }
+    }
+
+    /** libfekit 映射后仅刷新 probe（若 native 已初始化）；不在此线程 bootstrap。 */
+    private val libFeKitBootstrapHooked = AtomicBoolean(false)
+
     private fun hookLibFeKitLoadWithBootstrap() {
+        if (!libFeKitBootstrapHooked.compareAndSet(false, true)) return
         val hook = object : XC_MethodHook() {
             override fun afterHookedMethod(param: MethodHookParam) {
                 val hit = when (param.method.name) {
@@ -412,9 +496,17 @@ internal object EarlyAntiDetection {
                     else -> false
                 }
                 if (!hit) return
-                kotlin.runCatching { bootstrapNativeAntiDetect(currentHostContext()) }
-                ShamrockNative.onLibFeKitLoaded()
-                log("libfekit loaded — MSF native bootstrap + probe refresh")
+                if (ShamrockNative.initialized) {
+                    ShamrockNative.onLibFeKitLoaded()
+                    log("libfekit loaded — probe refresh (proc=${currentProcessName()})")
+                } else if (isMsfProcess() && AntiDetectionConfig.msfNativeAntiDetect) {
+                    scheduleMsfNativeBootstrapDelayed(800L)
+                    log("libfekit loaded — MSF native bootstrap scheduled (proc=${currentProcessName()})")
+                } else if (allowMainProcessNativeBootstrap()) {
+                    kotlin.runCatching { bootstrapNativeAntiDetect(currentHostContext()) }
+                    ShamrockNative.onLibFeKitLoaded()
+                    log("libfekit loaded — main native bootstrap (proc=${currentProcessName()})")
+                }
             }
         }
         runCatching {

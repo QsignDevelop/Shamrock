@@ -59,11 +59,12 @@ class PullConfig: IAction {
                     RemoteServiceBootstrap.apply(MobileQQ.getContext())
                     return@IPCRequest
                 }
-                if (HTTPServer.isServiceStarted) {
-                    HTTPServer.isServiceStarted = false
-                }
                 RemoteServiceBootstrap.apply(MobileQQ.getContext())
-                initAppService(MobileQQ.getContext())
+                if (serviceBootstrapped.get()) {
+                    ensureHttpServerStarted()
+                } else {
+                    initAppService(MobileQQ.getContext())
+                }
             })
             DynamicReceiver.register("push_config", IPCRequest {
                 ctx.toast("动态推送配置文件成功。")
@@ -169,8 +170,27 @@ class PullConfig: IAction {
         }
     }
 
+    private fun ensureHttpServerStarted() {
+        if (!ShamrockConfig.isOneBotV11Enabled()) return
+        GlobalScope.launch {
+            try {
+                if (HTTPServer.isServiceStarted) {
+                    HTTPServer.restart()
+                } else {
+                    HTTPServer.start(ShamrockConfig.getPort())
+                }
+                XposedBridge.log("Shamrock: ensureHttpServerStarted port=${ShamrockConfig.getPort()}")
+            } catch (e: Throwable) {
+                XposedBridge.log("Shamrock: ensureHttpServerStarted failed: ${e.message}")
+            }
+        }
+    }
+
     private fun initAppService(ctx: Context) {
-        if (!serviceBootstrapped.compareAndSet(false, true)) return
+        if (!serviceBootstrapped.compareAndSet(false, true)) {
+            ensureHttpServerStarted()
+            return
+        }
         // libshamrock.so = CQ 编解码等 JNI；与 anti-detect 的 cherrypopnt 无关，联网安全模式也要加载。
         kotlin.runCatching { NativeLoader.load("shamrock") }
             .onFailure { XposedBridge.log("Shamrock: NativeLoader.load(shamrock) failed: ${it.message}") }
@@ -184,6 +204,7 @@ class PullConfig: IAction {
             XposedBridge.log("Shamrock: connectivity-safe — shamrock JNI loaded, anti-detect probe skipped")
         }
         ActionLoader.runService(ctx)
+        ensureHttpServerStarted()
         kotlin.runCatching {
             QSecContextBridge.installHooks(ctx.classLoader)
             QuaBootstrap.forceApply(ctx.classLoader, null)

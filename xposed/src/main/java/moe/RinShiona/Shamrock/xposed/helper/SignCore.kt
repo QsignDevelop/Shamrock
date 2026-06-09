@@ -112,12 +112,18 @@ internal object SignCore {
         if (!isSignAttemptQua(qua)) return
         if (qua.isNotBlank()) QSecContextBridge.initFeKit(classLoader, qua)
         runCatching {
-            val feKit = classLoader.loadClass("com.tencent.mobileqq.fe.FEKit")
-            feKit.getMethod("requestToken").invoke(feKit.getMethod("getInstance").invoke(null))
-        }
-        runCatching {
             val sec = classLoader.loadClass("com.tencent.mobileqq.sign.QQSecuritySign")
-            sec.getMethod("requestToken").invoke(sec.getMethod("getInstance").invoke(null))
+            val inst = sec.getMethod("getInstance").invoke(null) ?: return@runCatching
+            runCatching { sec.getMethod("init", String::class.java).invoke(inst, qua) }
+            runCatching { sec.getMethod("requestTokenMain", Boolean::class.javaPrimitiveType).invoke(inst, true) }
+            sec.getMethod("requestToken").invoke(inst)
+        }
+        repeat(3) { attempt ->
+            runCatching {
+                val feKit = classLoader.loadClass("com.tencent.mobileqq.fe.FEKit")
+                feKit.getMethod("requestToken").invoke(feKit.getMethod("getInstance").invoke(null))
+            }
+            if (attempt < 2) Thread.sleep(400)
         }
     }
 }

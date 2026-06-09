@@ -87,7 +87,15 @@ internal object QSecContextBridge {
         runCatching { JSONObject(snapshotFile.readText()) }.getOrNull()?.let { obj ->
             for (field in SNAPSHOT_FIELDS) {
                 val value = obj.optString(field).takeIf { it.isNotBlank() } ?: continue
-                if (field == "business_qua" && !SignCore.isSignAttemptQua(value)) continue
+                if (field == "business_qua") {
+                    if (!SignCore.isSignAttemptQua(value)) continue
+                    // 升级 QQ 后快照里常残留旧版 QUA（如 9.2.90），会直接导致 token/sign 全 0。
+                    if (SignCore.isStaleHttpQua(value, classLoader)) {
+                        XposedBridge.log("Shamrock: skip stale snapshot qua=${value.take(32)}")
+                        QuaBootstrap.buildFromInstalledPackage()?.let { forceApplyQua(classLoader, it) }
+                        continue
+                    }
+                }
                 applyField(classLoader, field, value)
             }
         }

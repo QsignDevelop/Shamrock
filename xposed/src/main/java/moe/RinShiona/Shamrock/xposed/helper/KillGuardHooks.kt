@@ -190,15 +190,10 @@ internal object KillGuardHooks {
 
     /**
      * Only block QQ self-kill when a detection hook just fired and armed the shield.
-     * Do not blanket-block during cold start — that leaves a broken process on white screen.
+     * 冷启动只拦 Process.killProcess（见 hookJvmExit），不拦 Runtime.exit / MobileQQ.exit，
+     * 否则半残进程无法重启，表现为白屏或联网假死。
      */
     private fun shouldBlock(): Boolean {
-        if (AntiDetectionConfig.allowLiteAntiDetect() &&
-            System.currentTimeMillis() < liteColdStartUntilMs &&
-            (isSecurityStack() || isTencentDetectionStack())
-        ) {
-            return true
-        }
         if (isShamrockInducedStack()) return true
         if (!DetectionKillShield.isArmed()) return false
         return isSecurityStack() || isTencentDetectionStack()

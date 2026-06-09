@@ -18,6 +18,24 @@ internal object NtTaskSecurityGuard {
     fun install(classLoader: ClassLoader) {
         if (!ntHookInstalled.compareAndSet(false, true)) return
         runCatching {
+            XposedHelpers.findAndHookMethod(
+                "com.tencent.common.app.BaseApplicationImpl",
+                classLoader,
+                "attachBaseContext",
+                android.content.Context::class.java,
+                object : XC_MethodHook() {
+                    override fun beforeHookedMethod(param: MethodHookParam) {
+                        if (AntiDetectionConfig.allowLiteAntiDetect()) {
+                            EarlyAntiDetection.installLiteBeforeArtTi(classLoader)
+                        }
+                    }
+                },
+            )
+            log("attachBaseContext pre-ArtTi guard installed")
+        }.onFailure {
+            log("attachBaseContext guard failed: ${it.message}")
+        }
+        runCatching {
             val ntTask = classLoader.loadClass("com.tencent.qqnt.startup.task.NtTask")
             XposedHelpers.findAndHookMethod(ntTask, "onTaskStart", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {

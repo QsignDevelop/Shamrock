@@ -3,6 +3,7 @@ package moe.RinShiona.Shamrock.xposed.ipc.impl
 import de.robv.android.xposed.XC_MethodHook
 import de.robv.android.xposed.XposedBridge
 import de.robv.android.xposed.XposedHelpers
+import moe.RinShiona.Shamrock.xposed.helper.ChannelResponseCapture
 import moe.RinShiona.Shamrock.xposed.ipc.qsign.IQSignCallback
 import moe.RinShiona.Shamrock.tools.toHexString
 
@@ -47,6 +48,7 @@ internal object SignPacketCollector {
                     }
                 })
             }
+            ChannelResponseCapture.ensureHook(classLoader)
             XposedBridge.log("[SignPacketCollector] ChannelProxy hooks installed")
         }.onFailure {
             XposedBridge.log("[SignPacketCollector] hook failed: ${it.message}")

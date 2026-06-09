@@ -83,7 +83,7 @@ internal object QSecBypassHooks {
     fun installLite(classLoader: ClassLoader, mainProcess: Boolean) {
         if (!moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode) return
         if (!liteInstalled.compareAndSet(false, true)) return
-        neuterDtc(classLoader)
+        neuterDtcLite(classLoader)
         neuterDeepSleepDetector(classLoader)
         neuterMonitorReporter(classLoader)
         if (mainProcess) {
@@ -210,6 +210,22 @@ internal object QSecBypassHooks {
     }
 
     // -------------------- Dtc --------------------
+
+    /**
+     * 联网优先：不碰 dtcSendMessage / dtcProcessCall / dtcBL（后两者由 QQ9290 afterHook 处理）。
+     * 短路 dtcSendMessage 会直接断掉 DTC 后端通道，表现为 QQ 无法联网 / MSF 握手失败。
+     */
+    private fun neuterDtcLite(classLoader: ClassLoader) {
+        val cls = runCatching { classLoader.loadClass(DTC) }.getOrNull() ?: return
+        runCatching {
+            XposedBridge.hookAllMethods(cls, "isDebugVersion", object : XC_MethodHook() {
+                override fun beforeHookedMethod(param: MethodHookParam) {
+                    param.result = false
+                }
+            })
+        }
+        log("Dtc lite (connectivity-safe) installed")
+    }
 
     private fun neuterDtc(classLoader: ClassLoader) {
         val cls = runCatching { classLoader.loadClass(DTC) }.getOrNull() ?: return

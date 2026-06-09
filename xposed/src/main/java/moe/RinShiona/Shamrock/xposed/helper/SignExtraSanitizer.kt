@@ -20,10 +20,10 @@ import java.util.concurrent.atomic.AtomicLong
  *    detection markers here when libfekit / QSec see Xposed-like state.
  *  - Offset [9] has 0x40 toggled when detection fires (0x2f -> 0x6f).
  *  - Offset [10] flips from 0x02 (clean marker) to 0x00 (detected).
- *  - QQ 9.2.90 packs a 0x04 0x02 trailer at [11..12] inside the 14-byte
- *    header (e.g. 0131000200000000000400040200 → …00 04 00 04 02 00).
- *    Longer extras may repeat the pair at [14..15]; scrub both without
- *    touching signature bytes past the detection trailer.
+ *  - QQ 9.2.90 packs 0x04 0x02 when libfekit sees Xposed/LSPosed/module
+ *    hooks (friend-confirmed: "0402" = Shamrock-like module hook detect).
+ *    Typical positions: [11..12] in the 14-byte header, or [14..15] after it.
+ *    Example dirty: …00 04 00 04 02 00 — clean target keeps byte[10]=0x02 only.
  *
  *  The sign / token / proto-extra (length-delimited fields 2/3) that follow
  *  byte 14 are signature-relevant; we leave them untouched so the server
@@ -65,33 +65,33 @@ internal object SignExtraSanitizer {
         out[9] = (out[9].toInt() and DET_BIT_BYTE_9.toInt().inv()).toByte()
         if (out[10] != CLEAN_BYTE_10) out[10] = CLEAN_BYTE_10
         scrubTail0402(out)
+        scrubSliding0402InHeader(out)
 
         sanitizeCount.incrementAndGet()
         detectionHits.incrementAndGet()
         return out
     }
 
-    /** QQ 9.2.90 trailer probe `04 02` (in-header [11..12] and optional post-header [14..15]). */
+    /** QQ 9.2.90 module/hook trailer `04 02` anywhere in the first 32 bytes. */
     private fun hasTail0402(input: ByteArray): Boolean {
-        if (input.size >= HEADER_LEN &&
-            input[11] == TAIL_FLAG_A && input[12] == TAIL_FLAG_B
-        ) {
-            return true
+        val end = minOf(input.size - 1, 32)
+        for (i in 0 until end) {
+            if (input[i] == TAIL_FLAG_A && input[i + 1] == TAIL_FLAG_B) return true
         }
-        if (input.size >= HEADER_LEN + 2 &&
-            input[14] == TAIL_FLAG_A && input[15] == TAIL_FLAG_B
-        ) {
-            return true
+        return false
+    }
+
+    /** Zero any 04 02 pair in the fixed 14-byte detection header (catches layout drift). */
+    private fun scrubSliding0402InHeader(out: ByteArray) {
+        val end = minOf(out.size - 1, 32)
+        var i = 0
+        while (i < end) {
+            if (out[i] == TAIL_FLAG_A && out[i + 1] == TAIL_FLAG_B) {
+                out[i] = 0
+                out[i + 1] = 0
+            }
+            i++
         }
-        if (input.size >= HEADER_LEN &&
-            input[12] == TAIL_FLAG_A && input[13] == TAIL_FLAG_B
-        ) {
-            return true
-        }
-        return input.size >= HEADER_LEN + 2 &&
-            input[12] == TAIL_FLAG_A &&
-            input[14] == TAIL_FLAG_A &&
-            input[15] == TAIL_FLAG_B
     }
 
     private fun scrubTail0402(out: ByteArray) {

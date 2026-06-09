@@ -36,6 +36,7 @@ internal object ShamrockSignRelay {
     fun startMsfLoop(classLoader: ClassLoader) {
         if (!msfLoopStarted.compareAndSet(false, true)) return
         SignPacketCollector.ensureHook(classLoader)
+        ChannelResponseCapture.ensureHook(classLoader)
         touchMsfHeartbeat()
         Thread({
             XposedBridge.log("Shamrock: SignRelay MSF loop started")

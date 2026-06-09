@@ -55,6 +55,7 @@ internal object HookEvasion {
         if (!installed.compareAndSet(false, true)) return
 
         scrubStackTraces()
+        scrubReflectionEnumeration()
         scrubResourceEnumeration(classLoader)
         scrubBuildTags()
         scrubSystemProperties(classLoader)
