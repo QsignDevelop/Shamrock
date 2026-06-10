@@ -188,6 +188,8 @@ fun Routing.qsign() {
                     snapshotQuaPreview = snapQua.take(48),
                     connectivitySafe = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.connectivitySafeMode,
                     antiDetectionEnabled = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.enabled,
+                    msfNativeAntiDetect = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.msfNativeAntiDetect,
+                    signByteSanitize = moe.RinShiona.Shamrock.xposed.AntiDetectionConfig.hookSign,
                     quaUsable = moe.RinShiona.Shamrock.xposed.helper.SignCore.isUsableQua(quaR.qua),
                 ),
             ),

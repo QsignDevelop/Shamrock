@@ -36,8 +36,12 @@ internal object SignCore {
     }
 
     fun resolveFallbackQua(classLoader: ClassLoader): String {
-        QSecContextBridge.readRelayQua()?.takeIf { isSignAttemptQua(it) }?.let { return it }
-        QSecContextBridge.resolveQuaFromAppPublic(classLoader)?.takeIf { isSignAttemptQua(it) }?.let { return it }
+        QSecContextBridge.readRelayQua()
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
+            ?.let { return it }
+        QSecContextBridge.resolveQuaFromAppPublic(classLoader)
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
+            ?.let { return it }
         QuaBootstrap.buildFromInstalledPackage()?.let { return it }
         return ""
     }
@@ -45,13 +49,17 @@ internal object SignCore {
     fun resolveQuaForSign(classLoader: ClassLoader, requestQua: String? = null): QuaResolve {
         requestQua?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
             ?.let { return QuaResolve(it, "http_request") }
-        QSecContextBridge.readRelayQua()?.takeIf { isSignAttemptQua(it) }
+        QSecContextBridge.readRelayQua()
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
             ?.let { return QuaResolve(it, "relay_qua") }
-        QSecContextBridge.readField(classLoader, "business_qua")?.takeIf { isSignAttemptQua(it) }
+        QSecContextBridge.readField(classLoader, "business_qua")
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
             ?.let { return QuaResolve(it, "snapshot") }
-        QSecContextBridge.resolveQuaFromAppPublic(classLoader)?.takeIf { isSignAttemptQua(it) }
+        QSecContextBridge.resolveQuaFromAppPublic(classLoader)
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
             ?.let { return QuaResolve(it, "getQua") }
-        SignResultHelper.readQSecConfigField(classLoader, "business_qua")?.takeIf { isSignAttemptQua(it) }
+        SignResultHelper.readQSecConfigField(classLoader, "business_qua")
+            ?.takeIf { isSignAttemptQua(it) && !isStaleHttpQua(it, classLoader) }
             ?.let { return QuaResolve(it, "qsec_config") }
         resolveFallbackQua(classLoader).takeIf { isSignAttemptQua(it) }?.let {
             return QuaResolve(it, "fallback_builtin")

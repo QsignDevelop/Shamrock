@@ -84,13 +84,7 @@ internal object KillGuardHooks {
                     override fun beforeHookedMethod(param: MethodHookParam) {
                         val pid = param.args.getOrNull(0) as? Int ?: return
                         if (pid != Process.myPid() && pid != 0) return
-                        if (AntiDetectionConfig.allowLiteAntiDetect() &&
-                            System.currentTimeMillis() < liteColdStartUntilMs
-                        ) {
-                            log("blocked Process.killProcess($pid) — lite cold-start")
-                            param.result = null
-                            return
-                        }
+                        // 不全局拦截 killProcess — 账号切换/登录需重启 MSF，否则卡在选号页。
                         if (!shouldBlock()) return
                         log("blocked Process.killProcess($pid)")
                         param.result = null

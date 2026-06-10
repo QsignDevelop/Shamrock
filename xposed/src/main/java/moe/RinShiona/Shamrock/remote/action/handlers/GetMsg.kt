@@ -1,7 +1,7 @@
 package moe.RinShiona.Shamrock.remote.action.handlers
 
-import com.tencent.qqnt.kernel.nativeinterface.MsgConstant
 import kotlinx.serialization.json.JsonElement
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
 import moe.RinShiona.Shamrock.helper.MessageHelper
 import moe.RinShiona.Shamrock.remote.action.ActionSession
 import moe.RinShiona.Shamrock.remote.action.IActionHandler
@@ -33,8 +33,8 @@ internal object GetMsg: IActionHandler() {
             ),
             message = MsgConvert.convertMsgRecordToMsgSegment(msg),
             peerId = msg.peerUin,
-            groupId = if (msg.chatType == MsgConstant.KCHATTYPEGROUP) msg.peerUin else 0,
-            targetId = if (msg.chatType != MsgConstant.KCHATTYPEGROUP) msg.peerUin else 0
+            groupId = ChatTypeHelper.resolveGroupId(msg.chatType, msg.peerUin),
+            targetId = ChatTypeHelper.resolveTargetId(msg.chatType, msg.peerUin),
         ), echo)
     }
 

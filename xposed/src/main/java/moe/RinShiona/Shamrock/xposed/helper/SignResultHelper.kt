@@ -57,7 +57,7 @@ internal object SignResultHelper {
         }.getOrElse {
             lastFeKitError = it.javaClass.simpleName + ": " + (it.message ?: "")
             null
-        }?.let { SignExtraSanitizer.sanitizeSignResult(it) }
+        }
     }
 
     fun invokeSecuritySign(classLoader: ClassLoader, cmd: String, buffer: ByteArray, seqBytes: ByteArray, uin: String): Any? {
@@ -105,16 +105,15 @@ internal object SignResultHelper {
         }.getOrElse {
             lastSecuritySignError = it.javaClass.simpleName + ": " + (it.message ?: "")
             null
-        }?.let { SignExtraSanitizer.sanitizeSignResult(it) }
+        }
     }
 
     fun extractFields(rawResult: Any): Fields? = runCatching {
         val cls = rawResult.javaClass
-        val extraRaw = cls.getField("extra").get(rawResult) as? ByteArray ?: ByteArray(0)
         Fields(
             cls.getField("token").get(rawResult) as? ByteArray ?: ByteArray(0),
             cls.getField("sign").get(rawResult) as? ByteArray ?: ByteArray(0),
-            SignExtraSanitizer.sanitizeBytes(extraRaw) ?: extraRaw,
+            cls.getField("extra").get(rawResult) as? ByteArray ?: ByteArray(0),
         )
     }.getOrNull()
 

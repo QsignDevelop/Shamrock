@@ -423,7 +423,11 @@ internal object HookEvasion {
             c.contains("getprop sys.usb") ||
             c.contains("getprop persist.sys.usb") ||
             c.contains("dumpsys package") ||
-            (c.startsWith("ps") && (c.contains("magisk") || c.contains("lsposed") || c.contains("zygisk")))
+            c.contains("getenforce") || c.contains("selinux") ||
+            (c.startsWith("ps") && (
+                c.contains("magisk") || c.contains("lsposed") || c.contains("zygisk") ||
+                    c.contains("kernelsu") || c.contains("hookvip") || c.contains("simplehook")
+                ))
     }
 
     private fun log(msg: String) {

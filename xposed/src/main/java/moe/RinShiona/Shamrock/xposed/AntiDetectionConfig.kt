@@ -101,12 +101,12 @@ object AntiDetectionConfig {
     // ====== Sign相关 =====
     /** 联网优先：跳过重型反检测，只保留 QSign */
     var connectivitySafeMode = true
-    /** MSF 进程 native maps/probe bootstrap；默认关，避免 JNI FatalError 与通道竞合 */
+    /** MSF native 探针 hook；默认关，开启可能影响 QQ 联网/握手 */
     var msfNativeAntiDetect = false
     /** QSec 重度绕过，默认关 */
     var qsecHeavyBypass = false
-    /** Hook签名获取（核心功能） */
-    var hookSign = true
+    /** 旧版 sign/extra 字节清洗（已废弃，保持 false） */
+    var hookSign = false
     
     /** 使用远程qsign服务器 */
     var useRemoteQSign = true
@@ -149,7 +149,8 @@ object AntiDetectionConfig {
         connectivitySafeMode = true
         qsecHeavyBypass = false
         hideBattery = true
-        hookSign = true
+        hookSign = false
+        msfNativeAntiDetect = false
         useRemoteQSign = true
         qsignServerUrl = "http://127.0.0.1:8080"
         debugLog = false

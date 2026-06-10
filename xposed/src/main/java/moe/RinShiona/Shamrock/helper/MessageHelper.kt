@@ -20,8 +20,6 @@ import moe.RinShiona.Shamrock.tools.asJsonObjectOrNull
 import moe.RinShiona.Shamrock.tools.asString
 import moe.RinShiona.Shamrock.tools.json
 import moe.RinShiona.Shamrock.tools.jsonArray
-import kotlin.math.abs
-
 internal object MessageHelper {
     suspend fun sendMessageWithoutMsgId(chatType: Int, peerId: String, message: JsonArray, callback: IOperateCallback): Pair<Long, Int> {
         val uniseq = generateMsgId(chatType)
@@ -57,25 +55,11 @@ internal object MessageHelper {
         return Contact(chatType, peerId, subId)
     }
 
-    fun obtainMessageTypeByDetailType(detailType: String): Int {
-        return when(detailType) {
-            "troop", "group" -> MsgConstant.KCHATTYPEGROUP
-            "private" -> MsgConstant.KCHATTYPEC2C
-            "less" -> MsgConstant.KCHATTYPETEMPC2CFROMUNKNOWN
-            "guild" -> MsgConstant.KCHATTYPEGUILD
-            else -> error("不支持的消息来源类型")
-        }
-    }
+    fun obtainMessageTypeByDetailType(detailType: String): Int =
+        ChatTypeHelper.detailTypeToChatType(detailType)
 
-    fun obtainDetailTypeByMsgType(msgType: Int): String {
-        return when(msgType) {
-            MsgConstant.KCHATTYPEGROUP -> "group"
-            MsgConstant.KCHATTYPEC2C -> "private"
-            MsgConstant.KCHATTYPEGUILD -> "guild"
-            MsgConstant.KCHATTYPETEMPC2CFROMUNKNOWN -> "less"
-            else -> error("不支持的消息来源类型")
-        }
-    }
+    fun obtainDetailTypeByMsgType(msgType: Int): String =
+        ChatTypeHelper.chatTypeToDetailType(msgType)
 
     suspend fun messageArrayToMessageElements(chatType: Int, msgId: Long, targetUin: String, messageList: JsonArray): Pair<Boolean, ArrayList<MsgElement>> {
         val msgList = arrayListOf<MsgElement>()
@@ -103,14 +87,8 @@ internal object MessageHelper {
         return hasActionMsg to msgList
     }
 
-    fun generateMsgIdHash(chatType: Int, msgId: Long): Int {
-        val key =  when (chatType) {
-            MsgConstant.KCHATTYPEGROUP -> "grp$msgId"
-            MsgConstant.KCHATTYPEC2C -> "c2c$msgId"
-            else -> error("不支持的消息来源类型 | generateMsgIdHash: $chatType")
-        }
-        return abs(key.hashCode())
-    }
+    fun generateMsgIdHash(chatType: Int, msgId: Long): Int =
+        ChatTypeHelper.generateMsgIdHash(chatType, msgId)
 
     fun generateMsgId(chatType: Int): Pair<Int, Long> {
         val msgId = createMessageUniseq(chatType, System.currentTimeMillis())

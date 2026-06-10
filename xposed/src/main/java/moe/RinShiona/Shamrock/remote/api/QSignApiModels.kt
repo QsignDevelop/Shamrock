@@ -66,6 +66,10 @@ data class SignModeData(
     val connectivitySafe: Boolean,
     @SerialName("anti_detection_enabled")
     val antiDetectionEnabled: Boolean,
+    @SerialName("msf_native_anti_detect")
+    val msfNativeAntiDetect: Boolean = false,
+    @SerialName("sign_byte_sanitize")
+    val signByteSanitize: Boolean = false,
     @SerialName("qua_usable")
     val quaUsable: Boolean = false,
 )

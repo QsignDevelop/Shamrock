@@ -120,8 +120,13 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMsf(classLoader: ClassLoader) {
         plog("entryMsf — sign-process init")
-        DetectionKillShield.arm(180_000L)
-        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            DetectionKillShield.arm(45_000L)
+            KillGuardHooks.enableLiteColdStartWindow(45_000L)
+        } else {
+            DetectionKillShield.arm(180_000L)
+            KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        }
         kotlin.runCatching { KillGuardHooks.install(classLoader) }
         // ArtTiHook 之前：MSF 也需尽早 Java + libfekit load 监听
         kotlin.runCatching { EarlyAntiDetection.installLiteBeforeArtTi(classLoader) }
@@ -133,7 +138,7 @@ internal class XposedEntry: IXposedHookLoadPackage {
             kotlin.runCatching { EarlyAntiDetection.installForMsf(classLoader) }
                 .onFailure { plog("MSF anti-detect install failed: ${it.message}") }
         } else {
-            plog("connectivity-safe: MSF sign-sanitizer + QSign (full anti-detect after MSF onCreate)")
+            plog("connectivity-safe: MSF anti-detect hooks + QSign (after MSF onCreate)")
         }
         val startup = afterHook(51) { param ->
             val loader = param.thisObject?.javaClass?.classLoader
@@ -255,8 +260,13 @@ internal class XposedEntry: IXposedHookLoadPackage {
      */
     private fun entryMQQ(classLoader: ClassLoader) {
         plog("entryMQQ — NtTask guard + pre-ArtTi anti-detect")
-        DetectionKillShield.arm(180_000L)
-        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            DetectionKillShield.arm(45_000L)
+            KillGuardHooks.enableLiteColdStartWindow(45_000L)
+        } else {
+            DetectionKillShield.arm(180_000L)
+            KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        }
         kotlin.runCatching { KillGuardHooks.install(classLoader) }
         // 必须在 attach / ArtTiHook 之前装好 QSec.detectMethod=false 等，否则 QQ 直接自杀
         kotlin.runCatching { EarlyAntiDetection.installLiteBeforeArtTi(classLoader) }

@@ -50,7 +50,7 @@ internal object ContactHelper {
                     it.uin == peerId
                 } != null
             }
-            else -> error("unknown chat type: $chatType")
+            else -> true
         }
     }
 }

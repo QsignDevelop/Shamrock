@@ -20,14 +20,23 @@ internal object QSecContextBridge {
     )
 
     fun installHooks(classLoader: ClassLoader) {
+        reconcileInstalledQua(classLoader)
         runCatching {
             val cls = classLoader.loadClass("com.tencent.mobileqq.qsec.qsecurity.QSecConfig")
             XposedBridge.hookAllMethods(cls, "setupBusinessInfo", object : XC_MethodHook() {
                 override fun beforeHookedMethod(param: MethodHookParam) {
                     val qua = param.args.getOrNull(6) as? String ?: return
                     if (qua.length < 10) return
+                    if (SignCore.isStaleHttpQua(qua, classLoader)) {
+                        QuaBootstrap.buildFromInstalledPackage()?.let { installed ->
+                            param.args[6] = installed
+                            forceApplyQua(classLoader, installed)
+                            XposedBridge.log("Shamrock: setupBusinessInfo stale qua=${qua.take(32)} -> ${installed.take(32)}")
+                        }
+                        return
+                    }
                     lastSetupQua = qua
-                    relayQuaFile.writeText(qua)
+                    runCatching { relayQuaFile.writeText(qua) }
                     XposedBridge.log("Shamrock: setupBusinessInfo qua=${qua.take(48)} len=${qua.length}")
                 }
                 override fun afterHookedMethod(param: MethodHookParam) {
@@ -38,11 +47,31 @@ internal object QSecContextBridge {
     }
 
     fun publishSnapshot(classLoader: ClassLoader) {
+        reconcileInstalledQua(classLoader)
         publishRelayQua(classLoader)
         val obj = buildSnapshotJson(classLoader)
         if (obj.length() == 0) return
         snapshotFile.writeText(obj.toString())
         XposedBridge.log("Shamrock: QSec snapshot (qua=${obj.optString("business_qua").take(48)})")
+    }
+
+    /**
+     * 主进程常残留旧版 QUA（如 9.2.75），而 MSF/已装包已是 9.3.0 — 会导致选号/登录卡死。
+     */
+    private fun reconcileInstalledQua(classLoader: ClassLoader) {
+        val installed = QuaBootstrap.buildFromInstalledPackage() ?: return
+        val current = readFieldRaw(classLoader, "business_qua")
+        val relay = readRelayQua()
+        val staleField = current != null && SignCore.isStaleHttpQua(current, classLoader)
+        val staleRelay = relay != null && SignCore.isStaleHttpQua(relay, classLoader)
+        if (staleField || staleRelay || current.isNullOrBlank()) {
+            forceApplyQua(classLoader, installed)
+            if (staleField || staleRelay) {
+                XposedBridge.log(
+                    "Shamrock: qua reconciled field=${current?.take(28)} relay=${relay?.take(28)} -> ${installed.take(28)}",
+                )
+            }
+        }
     }
 
     fun publishRelayQua(classLoader: ClassLoader) {
@@ -51,8 +80,10 @@ internal object QSecContextBridge {
             readFieldRaw(classLoader, "business_qua"),
             resolveQuaFromApp(classLoader),
             buildFallbackQua(),
-        ).firstOrNull { SignCore.isSignAttemptQua(it) } ?: return
-        relayQuaFile.writeText(qua)
+        ).firstOrNull { SignCore.isSignAttemptQua(it) && !SignCore.isStaleHttpQua(it, classLoader) }
+            ?: buildFallbackQua()
+            ?: return
+        runCatching { relayQuaFile.writeText(qua) }
     }
 
     fun readRelayQua(): String? =
@@ -62,8 +93,13 @@ internal object QSecContextBridge {
         val obj = JSONObject()
         for (field in SNAPSHOT_FIELDS) readFieldRaw(classLoader, field)?.let { obj.put(field, it) }
         val snapQua = obj.optString("business_qua")
-        if (!SignCore.isSignAttemptQua(snapQua)) {
-            readRelayQua()?.let { obj.put("business_qua", it) }
+        if (!SignCore.isSignAttemptQua(snapQua) || SignCore.isStaleHttpQua(snapQua, classLoader)) {
+            readRelayQua()?.takeIf { !SignCore.isStaleHttpQua(it, classLoader) }
+                ?.let { obj.put("business_qua", it) }
+        }
+        val mergedQua = obj.optString("business_qua")
+        if (!SignCore.isSignAttemptQua(mergedQua) || SignCore.isStaleHttpQua(mergedQua, classLoader)) {
+            buildFallbackQua()?.let { obj.put("business_qua", it) }
         }
         if (!SignCore.isSignAttemptQua(obj.optString("business_qua"))) {
             resolveQuaFromApp(classLoader)?.let { obj.put("business_qua", it) }
@@ -79,7 +115,7 @@ internal object QSecContextBridge {
         if (!SignCore.isSignAttemptQua(qua)) return
         lastSetupQua = qua
         applyField(classLoader, "business_qua", qua)
-        relayQuaFile.writeText(qua)
+        runCatching { relayQuaFile.writeText(qua) }
     }
 
     fun applySnapshot(classLoader: ClassLoader, requestQua: String? = null) {
@@ -106,8 +142,11 @@ internal object QSecContextBridge {
     fun resolveQua(classLoader: ClassLoader, requestQua: String? = null): String {
         requestQua?.takeIf { SignCore.isSignAttemptQua(it) }?.let { return it }
         lastSetupQua.takeIf { SignCore.isSignAttemptQua(it) }?.let { return it }
-        readRelayQua()?.takeIf { SignCore.isSignAttemptQua(it) }?.let { return it }
-        readFieldRaw(classLoader, "business_qua")?.takeIf { SignCore.isSignAttemptQua(it) }?.let { return it }
+        readRelayQua()?.takeIf { SignCore.isSignAttemptQua(it) && !SignCore.isStaleHttpQua(it, classLoader) }
+            ?.let { return it }
+        readFieldRaw(classLoader, "business_qua")
+            ?.takeIf { SignCore.isSignAttemptQua(it) && !SignCore.isStaleHttpQua(it, classLoader) }
+            ?.let { return it }
         runCatching {
             snapshotFile.takeIf { it.exists() }?.let {
                 JSONObject(it.readText()).optString("business_qua").takeIf { q -> SignCore.isSignAttemptQua(q) }

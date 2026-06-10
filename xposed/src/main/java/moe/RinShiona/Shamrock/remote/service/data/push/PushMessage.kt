@@ -56,7 +56,10 @@ internal data class PushMessage (
     @SerialName("message") val message: JsonElement,
     @SerialName("raw_message") val rawMessage: String,
     @SerialName("font") val font: Int,
-    @SerialName("sender") val sender: Sender
+    @SerialName("sender") val sender: Sender,
+    /** QQ NT 原始 chatType，便于区分频道/临时会话等 */
+    @SerialName("qq_chat_type") val qqChatType: Int = 0,
+    @SerialName("qq_chat_type_name") val qqChatTypeName: String = "",
 )
 
 @Serializable

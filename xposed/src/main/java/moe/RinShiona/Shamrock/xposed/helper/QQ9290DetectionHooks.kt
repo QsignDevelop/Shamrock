@@ -23,11 +23,11 @@ internal object QQ9290DetectionHooks {
     private val extendedInstalled = AtomicBoolean(false)
 
     /** Minimal hooks for ArtTiHook / cold start — must be fast on main thread. */
-    fun installCritical(classLoader: ClassLoader) {
+    fun installCritical(classLoader: ClassLoader, neuterEnvScans: Boolean = true) {
         if (!criticalInstalled.compareAndSet(false, true)) return
         hookDtcCritical(classLoader)
-        hookQSecCritical(classLoader)
-        log("QQ 9.2.90 critical hooks installed")
+        hookQSecCritical(classLoader, neuterEnvScans)
+        log("QQ 9.2.90 critical hooks installed (envScanNeuter=$neuterEnvScans)")
     }
 
     /** Heavier sanitizers — call from a background thread after splash progresses. */
@@ -156,7 +156,7 @@ internal object QQ9290DetectionHooks {
         log("Dtc extended hooks OK")
     }
 
-    private fun hookQSecCritical(classLoader: ClassLoader) {
+    private fun hookQSecCritical(classLoader: ClassLoader, neuterEnvScans: Boolean) {
         runCatching {
             XposedHelpers.findAndHookMethod(
                 QSEC,
@@ -171,6 +171,10 @@ internal object QQ9290DetectionHooks {
                     }
                 }
             )
+        }
+        if (!neuterEnvScans) {
+            log("QSec critical: MSF connectivity-safe — detectMethod only")
+            return
         }
         runCatching {
             val qsec = classLoader.loadClass(QSEC)
@@ -199,6 +203,7 @@ internal object QQ9290DetectionHooks {
     }
 
     private fun hookQSecExtended(classLoader: ClassLoader) {
+        // doSomething 仅 arm KillShield，不短路返回值 — 否则 MSF/QSec 初始化与联网会断。
         runCatching {
             val qsec = classLoader.loadClass(QSEC)
             XposedBridge.hookAllMethods(qsec, "doSomething", object : XC_MethodHook() {
@@ -257,7 +262,11 @@ internal object QQ9290DetectionHooks {
                 ) ||
             c.contains("cat /proc/") && (c.contains("maps") || c.contains("mount")) ||
             c.contains("dumpsys package") ||
-            (c.startsWith("ps") && (c.contains("magisk") || c.contains("lsposed") || c.contains("zygisk")))
+            c.contains("getenforce") || c.contains("selinux") ||
+            (c.startsWith("ps") && (
+                c.contains("magisk") || c.contains("lsposed") || c.contains("zygisk") ||
+                    c.contains("kernelsu") || c.contains("hookvip") || c.contains("simplehook")
+                ))
     }
 
     private fun sanitizeDtcBlResult(result: Any?): Any? {

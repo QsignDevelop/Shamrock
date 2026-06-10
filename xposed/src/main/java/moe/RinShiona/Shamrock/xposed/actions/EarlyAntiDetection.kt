@@ -14,7 +14,6 @@ import moe.RinShiona.Shamrock.xposed.helper.PackageInstallMonitorHooks
 import moe.RinShiona.Shamrock.xposed.helper.PandoraHideHooks
 import moe.RinShiona.Shamrock.xposed.helper.QQ9290DetectionHooks
 import moe.RinShiona.Shamrock.xposed.helper.QSecBypassHooks
-import moe.RinShiona.Shamrock.xposed.helper.SignExtraSanitizer
 import moe.RinShiona.Shamrock.xposed.actions.StackTraceHideHooks
 import moe.RinShiona.Shamrock.xposed.ipc.impl.ShamrockNative
 
@@ -59,8 +58,23 @@ internal object EarlyAntiDetection {
      */
     private val liteInstalled = AtomicBoolean(false)
     private val liteDeferredInstalled = AtomicBoolean(false)
+    private val connectivityEnvInstalled = AtomicBoolean(false)
+    private val connectivityEnvScheduled = AtomicBoolean(false)
     private val nativeEarlyStarted = AtomicBoolean(false)
     private val attachHookInstalled = AtomicBoolean(false)
+
+    private const val CONNECTIVITY_SHIELD_MS = 45_000L
+    private const val CONNECTIVITY_ENV_DEFER_MS = 12_000L
+
+    private fun armConnectivityShield() {
+        DetectionKillShield.arm(CONNECTIVITY_SHIELD_MS)
+        KillGuardHooks.enableLiteColdStartWindow(CONNECTIVITY_SHIELD_MS)
+    }
+
+    private fun armFullShield() {
+        DetectionKillShield.arm(180_000L)
+        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+    }
 
     /**
      * connectivity-safe 下 sign extra 只在 :MSF 生成；主进程装 native（fopen/probe）
@@ -169,6 +183,10 @@ internal object EarlyAntiDetection {
             return
         }
         if (!liteInstalled.compareAndSet(false, true)) return
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            installLiteConnectivitySafe(classLoader)
+            return
+        }
         val mainProc = isMainQqProcess()
         log("installing lite anti-detect (proc=${currentProcessName()} main=$mainProc)")
         DetectionKillShield.arm(180_000L)
@@ -202,11 +220,52 @@ internal object EarlyAntiDetection {
             .onFailure { log("lite ModuleHide failed: ${it.message}") }
         runCatching { QSecBypassHooks.installLite(classLoader, mainProc) }
             .onFailure { log("lite QSecBypass failed: ${it.message}") }
-        if (AntiDetectionConfig.hookSign) {
-            runCatching { hookSignExtraSanitizer(classLoader) }
-                .onFailure { log("lite sign sanitizer failed: ${it.message}") }
-        }
         log("lite anti-detect installed")
+    }
+
+    /**
+     * 联网优先 · 启动期：只装登录链路上安全的 hook，避免选号/登录页卡死。
+     */
+    private fun installLiteConnectivitySafe(classLoader: ClassLoader) {
+        armConnectivityShield()
+        runCatching { KillGuardHooks.install(classLoader) }
+        patchBuildTags()
+        runCatching { ModuleHideHooks.installFileHideOnly() }
+        runCatching { AdbHideHooks.install(classLoader) }
+        runCatching { HookEvasion.install(classLoader) }
+        QQ9290DetectionHooks.installCritical(classLoader, neuterEnvScans = false)
+        val mainProc = isMainQqProcess()
+        log("connectivity-safe bootstrap (proc=${currentProcessName()} main=$mainProc)")
+        if (mainProc) {
+            scheduleConnectivitySafeEnvDeferred(classLoader)
+        }
+    }
+
+    /**
+     * 登录 UI 就绪后再装 Pandora / Dtc 扩展 — 过早安装会导致选号页卡住；
+     * 仍不碰 getXpsInfo / initXps。
+     */
+    fun scheduleConnectivitySafeEnvDeferred(classLoader: ClassLoader) {
+        if (!AntiDetectionConfig.connectivitySafeMode) return
+        if (!isMainQqProcess()) return
+        if (!connectivityEnvScheduled.compareAndSet(false, true)) return
+        Thread({
+            try {
+                Thread.sleep(CONNECTIVITY_ENV_DEFER_MS)
+            } catch (_: InterruptedException) {
+                return@Thread
+            }
+            installConnectivitySafeEnv(classLoader)
+        }, "Shamrock-ConnEnvDefer").apply { isDaemon = true; start() }
+    }
+
+    private fun installConnectivitySafeEnv(classLoader: ClassLoader) {
+        if (!connectivityEnvInstalled.compareAndSet(false, true)) return
+        runCatching { ModuleHideHooks.installEarly(classLoader) }
+        runCatching { PandoraHideHooks.install(classLoader) }
+        runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
+        runCatching { PackageInstallMonitorHooks.install(classLoader) }
+        log("connectivity-safe env hooks installed (proc=${currentProcessName()})")
     }
 
     /** loadPackage / attach 前：QSec + KillGuard + MSF native 监听，赶在 ArtTiHook 之前。 */
@@ -214,6 +273,11 @@ internal object EarlyAntiDetection {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
         if (isMsfProcess()) {
             installLiteMsfEarly(classLoader)
+            return
+        }
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            installLiteConnectivitySafe(classLoader)
+            log("lite pre-ArtTi connectivity-safe (proc=${currentProcessName()})")
             return
         }
         val mainProc = isMainQqProcess()
@@ -243,27 +307,37 @@ internal object EarlyAntiDetection {
      * Pandora / SignExtraSanitizer / QSecBypass 等延后到 [installLiteMsfDeferred]，避免 NtStartup JNI FatalError。
      */
     fun installLiteMsfEarly(classLoader: ClassLoader) {
-        DetectionKillShield.arm(180_000L)
-        KillGuardHooks.enableLiteColdStartWindow(180_000L)
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            armConnectivityShield()
+        } else {
+            armFullShield()
+        }
         runCatching { KillGuardHooks.install(classLoader) }
         patchBuildTags()
-        QQ9290DetectionHooks.installCritical(classLoader)
-        runCatching { HookEvasion.install(classLoader) }
-        log("lite MSF early ready (proc=${currentProcessName()})")
+        val neuterEnv = !AntiDetectionConfig.connectivitySafeMode
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            runCatching { ModuleHideHooks.installFileHideOnly() }
+            runCatching { AdbHideHooks.install(classLoader) }
+        } else {
+            runCatching { HookEvasion.install(classLoader) }
+        }
+        QQ9290DetectionHooks.installCritical(classLoader, neuterEnvScans = neuterEnv)
+        log("lite MSF early ready (proc=${currentProcessName()} envNeuter=$neuterEnv)")
     }
 
     /** MSF MobileQQ.onCreate 之后：补全 Dtc/Pandora/sign sanitizer/native。 */
     fun installLiteMsfDeferred(classLoader: ClassLoader) {
         if (!isMsfProcess()) return
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            // 联网优先：MSF 不装 extended/Pandora/native，避免 DTC/QSec 通道被干扰
+            log("lite MSF deferred skipped (connectivity-safe — QSign/IPC only)")
+            return
+        }
         runCatching { QQ9290DetectionHooks.installExtended(classLoader) }
         runCatching { ModuleHideHooks.installEarly(classLoader) }
         runCatching { AdbHideHooks.install(classLoader) }
         runCatching { PandoraHideHooks.install(classLoader) }
         runCatching { PackageInstallMonitorHooks.install(classLoader) }
-        // MSF 不装 QSecBypass.installLite — neuterDtc 曾短路 dtcSendMessage，破坏联网/握手
-        if (AntiDetectionConfig.hookSign) {
-            runCatching { hookSignExtraSanitizer(classLoader) }
-        }
         if (AntiDetectionConfig.msfNativeAntiDetect) {
             hookLibFeKitLoadWithBootstrap()
             scheduleMsfNativeBootstrapDelayed(1500L)
@@ -275,6 +349,10 @@ internal object EarlyAntiDetection {
     fun installLiteDeferred(classLoader: ClassLoader) {
         if (!AntiDetectionConfig.allowLiteAntiDetect()) return
         if (!liteDeferredInstalled.compareAndSet(false, true)) return
+        if (AntiDetectionConfig.connectivitySafeMode) {
+            log("connectivity-safe: skip deferred Pandora/HookEvasion")
+            return
+        }
         val mainProc = isMainQqProcess()
         log("installing lite deferred (proc=${currentProcessName()} main=$mainProc)")
         runCatching { StackTraceHideHooks.install() }
@@ -412,43 +490,6 @@ internal object EarlyAntiDetection {
         }
         if (AntiDetectionConfig.hideNative || AntiDetectionConfig.hideSignature) {
             hookLibFeKitLoad()
-        }
-        if (AntiDetectionConfig.hookSign) {
-            hookSignExtraSanitizer(classLoader)
-        }
-    }
-
-    fun hookSignExtraSanitizerOnly(classLoader: ClassLoader) {
-        if (!AntiDetectionConfig.hookSign) return
-        hookSignExtraSanitizer(classLoader)
-    }
-
-    /**
-     * Install the byte-level [SignExtraSanitizer] on `QQSecuritySign.getSign`
-     * as early as possible — before [AntiDetection.invoke] reaches FEKit.
-     * This ensures the very first sign call (which usually happens on the
-     * MSF login path right after Application.onCreate) already sees a clean
-     * extra header even if the rest of [AntiDetection] hasn't run yet.
-     */
-    private fun hookSignExtraSanitizer(classLoader: ClassLoader) {
-        val afterSanitize = object : XC_MethodHook() {
-            override fun afterHookedMethod(param: MethodHookParam) {
-                param.result = SignExtraSanitizer.sanitizeSignResult(param.result)
-            }
-        }
-        runCatching {
-            val cls = classLoader.loadClass("com.tencent.mobileqq.sign.QQSecuritySign")
-            XposedBridge.hookAllMethods(cls, "getSign", afterSanitize)
-            log("SignExtraSanitizer bound on QQSecuritySign.getSign (early)")
-        }.onFailure {
-            log("early QQSecuritySign sanitizer failed: ${it.message}")
-        }
-        runCatching {
-            val feKit = classLoader.loadClass("com.tencent.mobileqq.fe.FEKit")
-            XposedBridge.hookAllMethods(feKit, "getSign", afterSanitize)
-            log("SignExtraSanitizer bound on FEKit.getSign (early)")
-        }.onFailure {
-            log("early FEKit sanitizer failed: ${it.message}")
         }
     }
 

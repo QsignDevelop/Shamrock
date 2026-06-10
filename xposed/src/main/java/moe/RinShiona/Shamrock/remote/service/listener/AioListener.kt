@@ -2,7 +2,9 @@
 package moe.RinShiona.Shamrock.remote.service.listener
 
 import android.util.Log
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
 import moe.RinShiona.Shamrock.helper.MessageHelper
+import moe.RinShiona.Shamrock.helper.MsgPushRouter
 import com.tencent.qqnt.kernel.nativeinterface.*
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
@@ -30,53 +32,59 @@ internal object AioListener: IKernelMsgListener {
     private suspend fun handleMsg(record: MsgRecord) {
         try {
             val msgHash = MessageHelper.generateMsgIdHash(record.chatType, record.msgId)
-
-            MessageHelper.saveMsgMapping(
-                hash = msgHash,
-                qqMsgId = record.msgId,
-                chatType = record.chatType,
-                subChatType = record.chatType,
-                peerId = record.peerUin.toString(),
-                msgSeq = record.msgSeq.toInt(),
-                time = record.msgTime
-            )
+            saveMapping(record, msgHash)
 
             val rawMsg = record.elements.toCQCode(record.chatType, record.peerUin.toString())
             if (rawMsg.isEmpty()) return
 
-            when (record.chatType) {
-                MsgConstant.KCHATTYPEGROUP -> {
-                    LogCenter.log("群消息(group = ${record.peerName}(${record.peerUin}), uin = ${record.senderUin}, id = $msgHash|${record.msgSeq}, msg = $rawMsg)")
-                    ShamrockConfig.getGroupMsgRule()?.let { rule ->
-                        if (rule.black?.contains(record.peerUin) == true) return
-                        if (rule.white?.contains(record.peerUin) == false) return
-                    }
+            val typeName = ChatTypeHelper.chatTypeDisplayName(record.chatType)
+            LogCenter.log(
+                "${typeName}消息(chatType=${record.chatType}, peer=${record.peerUin}, " +
+                    "sender=${record.senderUin}, id=$msgHash|${record.msgSeq}, msg=$rawMsg)",
+            )
 
-                    GlobalPusher().forEach {
-                        it.pushGroupMsg(record, record.elements, rawMsg, msgHash)
-                    }
-                    if (GlobalPusher().isEmpty()) {
-                        LogCenter.log("收到群消息但未注册 OneBot 推送器，请开启 HTTP 回调或 WebSocket", Level.WARN)
-                    }
-                }
-                MsgConstant.KCHATTYPEC2C -> {
-                    LogCenter.log("私聊消息(private = ${record.senderUin}, id = $msgHash|${record.msgSeq}, msg = $rawMsg)")
-                    ShamrockConfig.getPrivateRule()?.let { rule ->
-                        if (rule.black?.contains(record.peerUin) == true) return
-                        if (rule.white?.contains(record.peerUin) == false) return
-                    }
+            if (!passesPushRule(record)) return
 
-                    GlobalPusher().forEach {
-                        it.pushPrivateMsg(record, record.elements, rawMsg, msgHash)
-                    }
-                    if (GlobalPusher().isEmpty()) {
-                        LogCenter.log("收到私聊消息但未注册 OneBot 推送器，请开启 HTTP 回调或 WebSocket", Level.WARN)
-                    }
-                }
-                else -> LogCenter.log("不支持PUSH事件: ${record.chatType}")
+            val pushers = GlobalPusher()
+            pushers.forEach {
+                MsgPushRouter.pushIncoming(it, record, record.elements, rawMsg, msgHash)
+            }
+            if (pushers.isEmpty()) {
+                LogCenter.log("收到${typeName}消息但未注册 OneBot 推送器，请开启 HTTP 回调或 WebSocket", Level.WARN)
             }
         } catch (e: Throwable) {
             LogCenter.log(e.stackTraceToString(), Level.WARN)
+        }
+    }
+
+    private fun saveMapping(record: MsgRecord, msgHash: Int) {
+        MessageHelper.saveMsgMapping(
+            hash = msgHash,
+            qqMsgId = record.msgId,
+            chatType = record.chatType,
+            subChatType = record.chatType,
+            peerId = record.peerUin.toString(),
+            msgSeq = record.msgSeq.toInt(),
+            time = record.msgTime,
+        )
+    }
+
+    private fun passesPushRule(record: MsgRecord): Boolean {
+        return when {
+            ChatTypeHelper.isGroupLike(record.chatType) -> {
+                ShamrockConfig.getGroupMsgRule()?.let { rule ->
+                    if (rule.black?.contains(record.peerUin) == true) return false
+                    if (rule.white?.contains(record.peerUin) == false) return false
+                }
+                true
+            }
+            else -> {
+                ShamrockConfig.getPrivateRule()?.let { rule ->
+                    if (rule.black?.contains(record.peerUin) == true) return false
+                    if (rule.white?.contains(record.peerUin) == false) return false
+                }
+                true
+            }
         }
     }
 
@@ -84,36 +92,17 @@ internal object AioListener: IKernelMsgListener {
         GlobalScope.launch {
             try {
                 val msgHash = MessageHelper.generateMsgIdHash(record.chatType, record.msgId)
-                MessageHelper.saveMsgMapping(
-                    hash = msgHash,
-                    qqMsgId = record.msgId,
-                    chatType = record.chatType,
-                    subChatType = record.chatType,
-                    peerId = record.peerUin.toString(),
-                    msgSeq = record.msgSeq.toInt(),
-                    time = record.msgTime
-                )
+                saveMapping(record, msgHash)
 
                 val rawMsg = record.elements.toCQCode(record.chatType, record.peerUin.toString())
                 if (rawMsg.isEmpty()) return@launch
 
-                LogCenter.log("发送消息($msgHash|${record.msgSeq}): $rawMsg")
+                LogCenter.log("发送消息(${ChatTypeHelper.chatTypeDisplayName(record.chatType)} $msgHash|${record.msgSeq}): $rawMsg")
 
-                if (!ShamrockConfig.enableSelfMsg())
-                    return@launch
+                if (!ShamrockConfig.enableSelfMsg()) return@launch
 
-                when (record.chatType) {
-                    MsgConstant.KCHATTYPEGROUP -> {
-                        GlobalPusher().forEach {
-                            it.pushSelfGroupSentMsg(record, record.elements, rawMsg, msgHash)
-                        }
-                    }
-                    MsgConstant.KCHATTYPEC2C -> {
-                        GlobalPusher().forEach {
-                            it.pushSelfPrivateSentMsg(record, record.elements, rawMsg, msgHash)
-                        }
-                    }
-                    else -> LogCenter.log("不支持SELF PUSH事件: ${record.chatType}")
+                GlobalPusher().forEach {
+                    MsgPushRouter.pushSelfSent(it, record, record.elements, rawMsg, msgHash)
                 }
             } catch (e: Throwable) {
                 LogCenter.log(e.stackTraceToString(), Level.WARN)
@@ -201,10 +190,9 @@ internal object AioListener: IKernelMsgListener {
     override fun onFileMsgCome(arrayList: ArrayList<MsgRecord>?) {
         arrayList?.forEach { record ->
             GlobalScope.launch {
-                when(record.chatType) {
-                    MsgConstant.KCHATTYPEGROUP -> onGroupFileMsg(record)
-                    MsgConstant.KCHATTYPEC2C -> onC2CFileMsg(record)
-                    else -> LogCenter.log("不支持该来源的文件上传事件：${record}", Level.WARN)
+                when {
+                    ChatTypeHelper.isGroupLike(record.chatType) -> onGroupFileMsg(record)
+                    else -> onC2CFileMsg(record)
                 }
             }
         }
@@ -386,7 +374,7 @@ internal object AioListener: IKernelMsgListener {
     }
 
     override fun onSendMsgError(j2: Long, contact: Contact?, i2: Int, str: String?) {
-        LogCenter.log("onSendMsgError($j2, $contact, $j2, $str)", Level.DEBUG)
+        LogCenter.log("onSendMsgError($j2, $contact, $i2, $str)", Level.DEBUG)
     }
 
     override fun onSysMsgNotification(

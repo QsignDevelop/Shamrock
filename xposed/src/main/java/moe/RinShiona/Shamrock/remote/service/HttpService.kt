@@ -2,7 +2,9 @@
 package moe.RinShiona.Shamrock.remote.service
 
 import com.tencent.qqnt.kernel.nativeinterface.MsgConstant
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
 import moe.RinShiona.Shamrock.helper.MessageHelper
+import moe.RinShiona.Shamrock.helper.MsgPushRouter
 import com.tencent.qqnt.kernel.nativeinterface.MsgElement
 import com.tencent.qqnt.kernel.nativeinterface.MsgRecord
 import moe.RinShiona.Shamrock.qqinterface.servlet.GroupSvc
@@ -41,7 +43,7 @@ internal object HttpService: HttpPushServlet() {
             raw,
             msgHash,
             MsgType.Private,
-            MsgSubType.Friend,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
             postType = PostType.MsgSent
         )
     }
@@ -58,7 +60,7 @@ internal object HttpService: HttpPushServlet() {
             raw,
             msgHash,
             MsgType.Group,
-            MsgSubType.NORMAL,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
             postType = PostType.MsgSent
         )
     }
@@ -75,7 +77,7 @@ internal object HttpService: HttpPushServlet() {
             raw,
             msgHash,
             MsgType.Private,
-            MsgSubType.Friend
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
         )
     }
 
@@ -86,12 +88,13 @@ internal object HttpService: HttpPushServlet() {
         msgHash: Int
     ) {
         pushMsg(
-            record, elements, raw, msgHash, MsgType.Group, MsgSubType.NORMAL,
-            role = when (record.senderUin) {
-                GroupSvc.getOwner(record.peerUin.toString()) -> MemberRole.Owner
-                in GroupSvc.getAdminList(record.peerUin.toString()) -> MemberRole.Admin
-                else -> MemberRole.Member
-            }
+            record,
+            elements,
+            raw,
+            msgHash,
+            MsgType.Group,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
+            role = MsgPushRouter.memberRole(record),
         )
     }
 
@@ -318,7 +321,9 @@ internal object HttpService: HttpPushServlet() {
                     role = role,
                     title = "",
                     level = "",
-                )
+                ),
+                qqChatType = record.chatType,
+                qqChatTypeName = ChatTypeHelper.chatTypeDisplayName(record.chatType),
             )) ?: return@launch
             handleQuicklyReply(
                 record,
@@ -414,7 +419,7 @@ internal object HttpService: HttpPushServlet() {
                 "id" to msgHash
             )
         ).json) // 添加回复
-        if (MsgConstant.KCHATTYPEGROUP == record.chatType && atSender) {
+        if (ChatTypeHelper.isGroupLike(record.chatType) && atSender) {
             messageList.add(mapOf(
                 "type" to "at",
                 "data" to mapOf(

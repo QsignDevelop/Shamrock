@@ -85,6 +85,7 @@ internal object XPrefConfigLoader {
             putExtra("ssl_alias", prefs.getString("ssl_alias", ""))
             putExtra("anti_connectivity_safe", prefs.getBoolean("anti_connectivity_safe", true))
             putExtra("anti_qsec_heavy", prefs.getBoolean("anti_qsec_heavy", false))
+            putExtra("anti_msf_native", prefs.getBoolean("anti_msf_native", false))
             putExtra("anti_detection_enabled", prefs.getBoolean("anti_detection_enabled", true))
         }
     }
@@ -98,6 +99,8 @@ internal object XPrefConfigLoader {
                 enabled = true
                 earlyEnabled = true
                 qsecHeavyBypass = false
+                msfNativeAntiDetect = false
+                hookSign = false
                 hideNetwork = false
                 useRemoteQSign = false
             } else {
@@ -116,7 +119,10 @@ internal object XPrefConfigLoader {
             hideSignature = prefs.getBoolean("anti_hide_signature", true)
             hideEmulator = prefs.getBoolean("anti_hide_emulator", true)
             fakeDevice = prefs.getBoolean("anti_fake_device", true)
-            hookSign = prefs.getBoolean("anti_hook_sign", true)
+            if (!connectivitySafe) {
+                hookSign = prefs.getBoolean("anti_hook_sign", false)
+                msfNativeAntiDetect = prefs.getBoolean("anti_msf_native", false)
+            }
             debugLog = prefs.getBoolean("anti_debug_log", false)
             qsignServerUrl = prefs.getString("anti_qsign_url", "http://127.0.0.1:8080") ?: "http://127.0.0.1:8080"
         }

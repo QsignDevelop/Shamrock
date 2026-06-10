@@ -38,6 +38,7 @@ object ActionLoader {
 
     private val ACTION_SERVICE_SAFE = arrayOf(
         InitRemoteService::class,
+        NoBackGround::class,
     )
 
     private val ACTION_MSF = arrayOf(

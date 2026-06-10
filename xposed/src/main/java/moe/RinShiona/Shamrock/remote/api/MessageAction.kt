@@ -1,5 +1,6 @@
 package moe.RinShiona.Shamrock.remote.api
 
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
 import moe.RinShiona.Shamrock.helper.MessageHelper
 import com.tencent.qqnt.kernel.nativeinterface.MsgConstant
 import io.ktor.server.application.call
@@ -36,19 +37,21 @@ fun Routing.messageAction() {
             val msgType = fetchGetOrThrow("message_type")
             val message = fetchGetOrThrow("message")
             val autoEscape = fetchGetOrNull("auto_escape")?.toBooleanStrict() ?: false
-            val peerIdKey = if(msgType == "group") "group_id" else "user_id"
             val chatType = MessageHelper.obtainMessageTypeByDetailType(msgType)
-            call.respondText(SendMessage(chatType, fetchGetOrThrow(peerIdKey), message, autoEscape))
+            val peerIdKey = ChatTypeHelper.peerIdParamName(chatType)
+            val peerId = fetchGetOrNull("peer_id") ?: fetchGetOrThrow(peerIdKey)
+            call.respondText(SendMessage(chatType, peerId, message, autoEscape))
         }
         post {
             val msgType = fetchPostOrThrow("message_type")
-            val peerIdKey = if(msgType == "group") "group_id" else "user_id"
             val chatType = MessageHelper.obtainMessageTypeByDetailType(msgType)
+            val peerIdKey = ChatTypeHelper.peerIdParamName(chatType)
+            val peerId = fetchPostOrNull("peer_id") ?: fetchPostOrThrow(peerIdKey)
             call.respondText(if (isJsonData() && !isJsonString("message")) {
-                SendMessage(chatType, fetchPostOrThrow(peerIdKey), fetchPostJsonArray("message"))
+                SendMessage(chatType, peerId, fetchPostJsonArray("message"))
             } else {
                 val autoEscape = fetchPostOrNull("auto_escape")?.toBooleanStrict() ?: false
-                SendMessage(chatType, fetchPostOrThrow(peerIdKey), fetchPostOrThrow("message"), autoEscape)
+                SendMessage(chatType, peerId, fetchPostOrThrow("message"), autoEscape)
             })
         }
     }

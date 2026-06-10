@@ -7,6 +7,8 @@ import com.tencent.qqnt.kernel.nativeinterface.MsgRecord
 import kotlinx.coroutines.DelicateCoroutinesApi
 import kotlinx.coroutines.GlobalScope
 import kotlinx.coroutines.launch
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
+import moe.RinShiona.Shamrock.helper.MsgPushRouter
 import moe.RinShiona.Shamrock.qqinterface.servlet.GroupSvc
 import moe.RinShiona.Shamrock.qqinterface.servlet.TicketSvc
 import moe.RinShiona.Shamrock.qqinterface.servlet.msg.toSegment
@@ -57,7 +59,7 @@ internal class WebSocketService(port: Int): WebSocketPushServlet(port) {
             raw,
             msgHash,
             MsgType.Private,
-            MsgSubType.Friend,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
             postType = PostType.MsgSent
         )
     }
@@ -74,7 +76,7 @@ internal class WebSocketService(port: Int): WebSocketPushServlet(port) {
             raw,
             msgHash,
             MsgType.Group,
-            MsgSubType.NORMAL,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
             postType = PostType.MsgSent
         )
     }
@@ -85,7 +87,14 @@ internal class WebSocketService(port: Int): WebSocketPushServlet(port) {
         raw: String,
         msgHash: Int
     ) {
-        pushMsg(record, elements, raw, msgHash, MsgType.Private, MsgSubType.Friend)
+        pushMsg(
+            record,
+            elements,
+            raw,
+            msgHash,
+            MsgType.Private,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
+        )
     }
 
     override fun pushGroupMsg(
@@ -95,12 +104,13 @@ internal class WebSocketService(port: Int): WebSocketPushServlet(port) {
         msgHash: Int
     ) {
         pushMsg(
-            record, elements, raw, msgHash, MsgType.Group, MsgSubType.NORMAL,
-            role = when (record.senderUin) {
-                GroupSvc.getOwner(record.peerUin.toString()) -> MemberRole.Owner
-                in GroupSvc.getAdminList(record.peerUin.toString()) -> MemberRole.Admin
-                else -> MemberRole.Member
-            }
+            record,
+            elements,
+            raw,
+            msgHash,
+            MsgType.Group,
+            ChatTypeHelper.toOneBotMsgSubType(record.chatType),
+            role = MsgPushRouter.memberRole(record),
         )
     }
 
@@ -307,7 +317,9 @@ internal class WebSocketService(port: Int): WebSocketPushServlet(port) {
                     role = role,
                     title = "",
                     level = "",
-                )
+                ),
+                qqChatType = record.chatType,
+                qqChatTypeName = ChatTypeHelper.chatTypeDisplayName(record.chatType),
             ))
         }
     }

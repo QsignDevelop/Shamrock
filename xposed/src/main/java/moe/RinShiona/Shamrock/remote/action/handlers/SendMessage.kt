@@ -3,6 +3,7 @@ package moe.RinShiona.Shamrock.remote.action.handlers
 import com.tencent.qqnt.kernel.nativeinterface.MsgConstant
 import moe.RinShiona.Shamrock.remote.action.ActionSession
 import moe.RinShiona.Shamrock.remote.action.IActionHandler
+import moe.RinShiona.Shamrock.helper.ChatTypeHelper
 import moe.RinShiona.Shamrock.helper.MessageHelper
 import moe.RinShiona.Shamrock.helper.ParamsException
 import moe.RinShiona.Shamrock.qqinterface.servlet.MsgSvc
@@ -17,24 +18,32 @@ import moe.RinShiona.Shamrock.tools.EmptyJsonString
 
 internal object SendMessage: IActionHandler() {
     override suspend fun internalHandle(session: ActionSession): String {
-        val detailType = session.getStringOrNull("detail_type") ?: session.getStringOrNull("message_type")
+        val detailType = session.getStringOrNull("detail_type")
+            ?: session.getStringOrNull("message_type")
         try {
-            val chatType = detailType?.let {
-                MessageHelper.obtainMessageTypeByDetailType(it)
-            } ?: run {
-                if (session.has("group_id")) {
-                    MsgConstant.KCHATTYPEGROUP
-                } else if (session.has("user_id")) {
-                    MsgConstant.KCHATTYPEC2C
-                } else {
-                    return noParam("detail_type/message_type", session.echo)
+            val chatType = session.getIntOrNull("chat_type")
+                ?: session.getStringOrNull("chat_type")?.let {
+                    it.toIntOrNull() ?: ChatTypeHelper.detailTypeToChatType(it)
                 }
-            }
-            val peerId = when(chatType) {
-                MsgConstant.KCHATTYPEGROUP -> session.getStringOrNull("group_id") ?: return noParam("group_id", session.echo)
-                MsgConstant.KCHATTYPEC2C -> session.getStringOrNull("user_id") ?: return noParam("user_id", session.echo)
-                else -> error("unknown chat type: $chatType")
-            }
+                ?: detailType?.let { MessageHelper.obtainMessageTypeByDetailType(it) }
+                ?: run {
+                    when {
+                        session.has("group_id") -> MsgConstant.KCHATTYPEGROUP
+                        session.has("user_id") -> MsgConstant.KCHATTYPEC2C
+                        session.has("peer_id") -> MsgConstant.KCHATTYPEC2C
+                        else -> return noParam("chat_type/detail_type/group_id/user_id/peer_id", session.echo)
+                    }
+                }
+            val peerId = session.getStringOrNull("peer_id")
+                ?: if (ChatTypeHelper.isGroupLike(chatType)) {
+                    session.getStringOrNull("group_id")
+                } else {
+                    session.getStringOrNull("user_id")
+                }
+                ?: return noParam(
+                    "${ChatTypeHelper.peerIdParamName(chatType)} 或 peer_id",
+                    session.echo,
+                )
             return if (session.isString("message")) {
                 val autoEscape = session.getBooleanOrDefault("auto_escape", false)
                 val message = session.getString("message")

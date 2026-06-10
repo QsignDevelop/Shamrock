@@ -85,7 +85,8 @@ class PullConfig: IAction {
                     hideSignature = it.getBooleanExtra("anti_hide_signature", true)
                     hideEmulator = it.getBooleanExtra("anti_hide_emulator", true)
                     fakeDevice = it.getBooleanExtra("anti_fake_device", true)
-                    hookSign = it.getBooleanExtra("anti_hook_sign", true)
+                    hookSign = it.getBooleanExtra("anti_hook_sign", false)
+                    msfNativeAntiDetect = it.getBooleanExtra("anti_msf_native", false)
                     debugLog = it.getBooleanExtra("anti_debug_log", false)
                     connectivitySafeMode = it.getBooleanExtra("anti_connectivity_safe", true)
                     qsecHeavyBypass = it.getBooleanExtra("anti_qsec_heavy", false)
@@ -93,6 +94,8 @@ class PullConfig: IAction {
                     if (connectivitySafeMode) {
                         enabled = true
                         earlyEnabled = true
+                        msfNativeAntiDetect = false
+                        hookSign = false
                         useRemoteQSign = false
                     }
                 }
@@ -121,6 +124,7 @@ class PullConfig: IAction {
 
     private suspend fun loadConfigAndStart(ctx: Context) {
         // HyperOS/MIUI blocks App->QQ broadcast; poll LSPosed-shared prefs.
+        var providerTried = false
         repeat(30) { attempt ->
             if (serviceBootstrapped.get()) return
             if (XPrefConfigLoader.loadIfAvailable()) {
@@ -128,29 +132,34 @@ class PullConfig: IAction {
                 initAppService(ctx)
                 return
             }
-            // If prefs are not readable, refresh config from the App via provider call.
-            runCatching {
-                val uri = Uri.parse("content://${moe.RinShiona.Shamrock.xposed.helper.ModuleHide.PACKAGE}.xqbot.provider")
-                val bundle = MobileQQ.getContext().contentResolver.call(uri, "get_config", null, null)
-                if (bundle != null && bundle.getBoolean("__ok", false)) {
-                    isConfigOk = true
-                    XposedBridge.log("Shamrock: config loaded via provider call (${bundle.keySet().size} keys)")
-                    val intent = android.content.Intent().apply {
-                        bundle.keySet().forEach { k ->
-                            if (k == "__ok") return@forEach
-                            when (val v = bundle.get(k)) {
-                                is Int -> putExtra(k, v)
-                                is Long -> putExtra(k, v)
-                                is Boolean -> putExtra(k, v)
-                                is Float -> putExtra(k, v)
-                                is String -> putExtra(k, v)
-                                is ByteArray -> putExtra(k, v)
+            // MIUI 常拦截 QQ→CherryPop Provider；仅尝试一次，避免登录页被 IPC 重试拖死。
+            if (!providerTried) {
+                providerTried = true
+                runCatching {
+                    val uri = Uri.parse("content://${moe.RinShiona.Shamrock.xposed.helper.ModuleHide.PACKAGE}.xqbot.provider")
+                    val bundle = MobileQQ.getContext().contentResolver.call(uri, "get_config", null, null)
+                    if (bundle != null && bundle.getBoolean("__ok", false)) {
+                        isConfigOk = true
+                        XposedBridge.log("Shamrock: config loaded via provider call (${bundle.keySet().size} keys)")
+                        val intent = android.content.Intent().apply {
+                            bundle.keySet().forEach { k ->
+                                if (k == "__ok") return@forEach
+                                when (val v = bundle.get(k)) {
+                                    is Int -> putExtra(k, v)
+                                    is Long -> putExtra(k, v)
+                                    is Boolean -> putExtra(k, v)
+                                    is Float -> putExtra(k, v)
+                                    is String -> putExtra(k, v)
+                                    is ByteArray -> putExtra(k, v)
+                                }
                             }
                         }
+                        ShamrockConfig.updateConfig(intent)
+                        initAppService(ctx)
+                        return
                     }
-                    ShamrockConfig.updateConfig(intent)
-                    initAppService(ctx)
-                    return
+                }.onFailure {
+                    XposedBridge.log("Shamrock: provider config skipped (MIUI?): ${it.message}")
                 }
             }
             if (ShamrockConfig.isInit()) {
